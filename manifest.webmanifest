@@ -1,0 +1,15 @@
+{
+  "name": "보컬 스코프",
+  "short_name": "보컬 스코프",
+  "description": "실시간 보컬 음정, cent, 안정도와 12초 피치 흐름을 확인하는 연습 도구",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#080d18",
+  "theme_color": "#0b1020",
+  "orientation": "portrait-primary",
+  "icons": [
+    {"src":"./icon-180.png","sizes":"180x180","type":"image/png"},
+    {"src":"./icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}

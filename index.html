@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="보컬 스코프" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>보컬 스코프</title>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">VOCAL SCOPE</div>
+        <h1>보컬 스코프</h1>
+      </div>
+      <button id="helpBtn" class="icon-btn" aria-label="도움말">?</button>
+    </header>
+
+    <section class="status-row" aria-live="polite">
+      <span id="micDot" class="dot idle"></span>
+      <span id="micStatus">측정 대기 중</span>
+      <span class="spacer"></span>
+      <span id="inputStatus" class="muted">마이크 미사용</span>
+    </section>
+
+    <section class="hero card">
+      <div class="mode-row">
+        <button id="targetBtn" class="pill">자유 측정</button>
+        <span id="qualityBadge" class="quality waiting">신호 대기</span>
+      </div>
+
+      <div class="note-wrap">
+        <div id="noteName" class="note-name">—</div>
+        <div id="noteKorean" class="note-korean">음을 내면 표시됩니다</div>
+      </div>
+
+      <div class="metric-grid">
+        <div class="metric">
+          <span class="metric-label">주파수</span>
+          <strong id="frequencyValue">— Hz</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">편차</span>
+          <strong id="centValue">— cent</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">안정도</span>
+          <strong id="stabilityValue">—</strong>
+        </div>
+      </div>
+
+      <div class="cent-meter" aria-label="센트 편차">
+        <div class="cent-scale"><span>−50</span><span>0</span><span>+50</span></div>
+        <div class="meter-track">
+          <div class="meter-safe-zone"></div>
+          <div class="meter-center"></div>
+          <div id="centNeedle" class="meter-needle" style="transform:translateX(-50%)"></div>
+        </div>
+        <div id="centHint" class="meter-hint">0 cent에 가까울수록 정확합니다.</div>
+      </div>
+    </section>
+
+    <section id="targetPanel" class="target-summary card hidden">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">TARGET</span>
+          <h2 id="targetTitle">목표음</h2>
+        </div>
+        <span id="targetAccuracy" class="big-stat">0%</span>
+      </div>
+      <div class="target-stats">
+        <div><span>정확 유지</span><strong id="holdTime">0.0초</strong></div>
+        <div><span>현재 연속</span><strong id="streakTime">0.0초</strong></div>
+        <div><span>목표 편차</span><strong id="targetCent">—</strong></div>
+      </div>
+    </section>
+
+    <section class="graph-card card">
+      <div class="section-heading graph-heading">
+        <div>
+          <span class="section-kicker">PITCH FLOW</span>
+          <h2>최근 12초 음정 흐름</h2>
+        </div>
+        <button id="freezeBtn" class="ghost-btn">고정</button>
+      </div>
+      <div class="graph-wrap">
+        <canvas id="pitchCanvas" aria-label="최근 12초 음정 그래프"></canvas>
+      </div>
+      <div class="graph-legend">
+        <span><i class="legend-line detected"></i>측정 음정</span>
+        <span><i class="legend-line target"></i>목표음</span>
+        <span>가로선 1칸 = 반음</span>
+      </div>
+    </section>
+
+    <section class="signal-card card">
+      <div class="section-heading compact">
+        <h2>입력 상태</h2>
+        <span id="confidenceText" class="muted">신뢰도 —</span>
+      </div>
+      <div class="level-row">
+        <span>마이크</span>
+        <div class="level-track"><div id="levelBar" class="level-fill"></div></div>
+      </div>
+      <div class="diagnostic-grid">
+        <div><span>입력</span><strong id="dbValue">— dB</strong></div>
+        <div><span>소음 바닥</span><strong id="noiseValue">— dB</strong></div>
+        <div><span>판정 문턱</span><strong id="gateValue">— dB</strong></div>
+      </div>
+      <p id="diagnosticHint" class="diagnostic-hint">측정을 시작하면 주변 소음에 맞춰 자동으로 감도를 조절합니다.</p>
+    </section>
+
+    <div class="sticky-actions">
+      <button id="measureBtn" class="primary-btn">마이크로 측정 시작</button>
+      <button id="resetBtn" class="secondary-btn">기록 초기화</button>
+    </div>
+  </main>
+
+  <dialog id="targetDialog" class="sheet">
+    <form method="dialog" class="sheet-inner">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div>
+          <span class="section-kicker">MEASUREMENT MODE</span>
+          <h2>측정 기준</h2>
+        </div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <button id="freeModeBtn" type="button" class="mode-choice selected">자유 측정 <span>현재 내는 음 확인</span></button>
+      <div class="octave-row" id="octaveTabs"></div>
+      <div class="note-grid" id="noteGrid"></div>
+      <p class="sheet-note">목표음의 ±15 cent 안에 머무른 시간이 ‘정확 유지’로 기록됩니다.</p>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog" class="sheet">
+    <form method="dialog" class="sheet-inner help-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <h2>사용 방법</h2>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <ol>
+        <li>처음에는 AirPods 없이 조용한 곳에서 사용하세요.</li>
+        <li>iPhone을 얼굴에서 약 30~50cm 떨어뜨리고 측정을 시작하세요.</li>
+        <li>편안한 크기로 ‘아—’ 또는 ‘우—’를 2~3초 유지하세요.</li>
+        <li>±15 cent 안이면 정확 구간입니다. 그래프의 한 줄은 반음입니다.</li>
+      </ol>
+      <div class="help-callout">소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요. 목이 아프거나 쉬기 시작하면 측정을 중단하세요.</div>
+    </form>
+  </dialog>
+
+  <dialog id="errorDialog" class="sheet">
+    <form method="dialog" class="sheet-inner">
+      <div class="sheet-handle"></div>
+      <h2>마이크를 시작하지 못했습니다</h2>
+      <p id="errorText">Safari의 마이크 권한을 확인해 주세요.</p>
+      <button id="reloadBtn" type="button" class="primary-btn">오디오 엔진 다시 불러오기</button>
+      <button value="cancel" class="secondary-btn">닫기</button>
+    </form>
+  </dialog>
+
+  <script src="./pitch-core.js"></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>
