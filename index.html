@@ -10,6 +10,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./history.css" />
   <title>보컬 스코프</title>
 </head>
 <body>
@@ -41,25 +42,15 @@
       </div>
 
       <div class="metric-grid">
-        <div class="metric">
-          <span class="metric-label">주파수</span>
-          <strong id="frequencyValue">— Hz</strong>
-        </div>
-        <div class="metric">
-          <span class="metric-label">편차</span>
-          <strong id="centValue">— cent</strong>
-        </div>
-        <div class="metric">
-          <span class="metric-label">안정도</span>
-          <strong id="stabilityValue">—</strong>
-        </div>
+        <div class="metric"><span class="metric-label">주파수</span><strong id="frequencyValue">— Hz</strong></div>
+        <div class="metric"><span class="metric-label">편차</span><strong id="centValue">— cent</strong></div>
+        <div class="metric"><span class="metric-label">안정도</span><strong id="stabilityValue">—</strong></div>
       </div>
 
       <div class="cent-meter" aria-label="센트 편차">
         <div class="cent-scale"><span>−50</span><span>0</span><span>+50</span></div>
         <div class="meter-track">
-          <div class="meter-safe-zone"></div>
-          <div class="meter-center"></div>
+          <div class="meter-safe-zone"></div><div class="meter-center"></div>
           <div id="centNeedle" class="meter-needle" style="transform:translateX(-50%)"></div>
         </div>
         <div id="centHint" class="meter-hint">0 cent에 가까울수록 정확합니다.</div>
@@ -68,10 +59,7 @@
 
     <section id="targetPanel" class="target-summary card hidden">
       <div class="section-heading">
-        <div>
-          <span class="section-kicker">TARGET</span>
-          <h2 id="targetTitle">목표음</h2>
-        </div>
+        <div><span class="section-kicker">TARGET</span><h2 id="targetTitle">목표음</h2></div>
         <span id="targetAccuracy" class="big-stat">0%</span>
       </div>
       <div class="target-stats">
@@ -83,15 +71,10 @@
 
     <section class="graph-card card">
       <div class="section-heading graph-heading">
-        <div>
-          <span class="section-kicker">PITCH FLOW</span>
-          <h2>최근 12초 음정 흐름</h2>
-        </div>
+        <div><span class="section-kicker">PITCH FLOW</span><h2>최근 12초 음정 흐름</h2></div>
         <button id="freezeBtn" class="ghost-btn">고정</button>
       </div>
-      <div class="graph-wrap">
-        <canvas id="pitchCanvas" aria-label="최근 12초 음정 그래프"></canvas>
-      </div>
+      <div class="graph-wrap"><canvas id="pitchCanvas" aria-label="최근 12초 음정 그래프"></canvas></div>
       <div class="graph-legend">
         <span><i class="legend-line detected"></i>측정 음정</span>
         <span><i class="legend-line target"></i>목표음</span>
@@ -99,15 +82,22 @@
       </div>
     </section>
 
+    <section class="history-card card">
+      <div class="section-heading history-heading">
+        <div><span class="section-kicker">PRACTICE HISTORY</span><h2>연습 기록</h2></div>
+        <div class="history-heading-actions">
+          <span id="historyLiveStatus" class="history-live-status">자동 저장</span>
+          <button id="historyAllBtn" class="ghost-btn">전체 보기</button>
+        </div>
+      </div>
+      <div id="historySummary" class="history-summary"><strong>아직 기록 없음</strong><span>측정을 끝내면 자동 저장됩니다.</span></div>
+      <div id="recentHistoryList" class="history-list"></div>
+      <p id="historyEmpty" class="history-empty">목표음을 선택해 2~3초씩 유지해 보세요. 측정을 끝내면 정확률과 오차, 그래프가 이곳에 남습니다.</p>
+    </section>
+
     <section class="signal-card card">
-      <div class="section-heading compact">
-        <h2>입력 상태</h2>
-        <span id="confidenceText" class="muted">신뢰도 —</span>
-      </div>
-      <div class="level-row">
-        <span>마이크</span>
-        <div class="level-track"><div id="levelBar" class="level-fill"></div></div>
-      </div>
+      <div class="section-heading compact"><h2>입력 상태</h2><span id="confidenceText" class="muted">신뢰도 —</span></div>
+      <div class="level-row"><span>마이크</span><div class="level-track"><div id="levelBar" class="level-fill"></div></div></div>
       <div class="diagnostic-grid">
         <div><span>입력</span><strong id="dbValue">— dB</strong></div>
         <div><span>소음 바닥</span><strong id="noiseValue">— dB</strong></div>
@@ -118,18 +108,17 @@
 
     <div class="sticky-actions">
       <button id="measureBtn" class="primary-btn">마이크로 측정 시작</button>
-      <button id="resetBtn" class="secondary-btn">기록 초기화</button>
+      <button id="resetBtn" class="secondary-btn">현재 기록 지우기</button>
     </div>
   </main>
+
+  <div id="saveToast" class="save-toast" role="status" aria-live="polite"></div>
 
   <dialog id="targetDialog" class="sheet">
     <form method="dialog" class="sheet-inner">
       <div class="sheet-handle"></div>
       <div class="sheet-title-row">
-        <div>
-          <span class="section-kicker">MEASUREMENT MODE</span>
-          <h2>측정 기준</h2>
-        </div>
+        <div><span class="section-kicker">MEASUREMENT MODE</span><h2>측정 기준</h2></div>
         <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
       </div>
       <button id="freeModeBtn" type="button" class="mode-choice selected">자유 측정 <span>현재 내는 음 확인</span></button>
@@ -139,18 +128,52 @@
     </form>
   </dialog>
 
+  <dialog id="historyDialog" class="sheet">
+    <form method="dialog" class="sheet-inner history-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span class="section-kicker">PRACTICE HISTORY</span><h2>전체 연습 기록</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <div id="allHistoryList" class="all-history-list"></div>
+      <button id="clearAllHistoryBtn" type="button" class="danger-btn">모든 연습 기록 삭제</button>
+    </form>
+  </dialog>
+
+  <dialog id="sessionDialog" class="sheet">
+    <form method="dialog" class="sheet-inner session-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span id="sessionDate" class="section-kicker">연습 기록</span><h2 id="sessionTitle">기록</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <div class="session-main-score"><span>±15 cent 정확률</span><strong id="sessionAccuracy">—</strong></div>
+      <div class="session-stat-grid">
+        <div><span>평균 절대 오차</span><strong id="sessionError">—</strong></div>
+        <div><span>평균 치우침</span><strong id="sessionBias">—</strong></div>
+        <div><span>최장 정확 유지</span><strong id="sessionLongest">—</strong></div>
+        <div><span>유효 음성 시간</span><strong id="sessionVoiced">—</strong></div>
+        <div><span>측정 음역</span><strong id="sessionRange">—</strong></div>
+      </div>
+      <div class="history-graph-wrap"><canvas id="historyCanvas" aria-label="과거 연습 음정 그래프"></canvas></div>
+      <div class="history-graph-note">청록색 = 실제 음정 · 파란 점선 = 목표음 · 목표음 연습에서는 ±15 cent 구간도 표시됩니다.</div>
+      <div class="coach-card"><span class="section-kicker">NEXT PRACTICE</span><p id="sessionCoach"></p></div>
+      <button id="retryTargetBtn" type="button" class="primary-btn">이 목표음으로 다시 연습</button>
+      <button id="deleteSessionBtn" type="button" class="danger-btn">이 기록 삭제</button>
+    </form>
+  </dialog>
+
   <dialog id="helpDialog" class="sheet">
     <form method="dialog" class="sheet-inner help-sheet">
       <div class="sheet-handle"></div>
-      <div class="sheet-title-row">
-        <h2>사용 방법</h2>
-        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
-      </div>
+      <div class="sheet-title-row"><h2>사용 방법</h2><button value="cancel" class="icon-btn" aria-label="닫기">×</button></div>
       <ol>
         <li>처음에는 AirPods 없이 조용한 곳에서 사용하세요.</li>
         <li>iPhone을 얼굴에서 약 30~50cm 떨어뜨리고 측정을 시작하세요.</li>
         <li>편안한 크기로 ‘아—’ 또는 ‘우—’를 2~3초 유지하세요.</li>
         <li>±15 cent 안이면 정확 구간입니다. 그래프의 한 줄은 반음입니다.</li>
+        <li>측정을 끝내면 연습 기록에 정확률·평균 오차·전체 그래프가 자동 저장됩니다.</li>
+        <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
       </ol>
       <div class="help-callout">소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요. 목이 아프거나 쉬기 시작하면 측정을 중단하세요.</div>
     </form>
@@ -168,5 +191,6 @@
 
   <script src="./pitch-core.js"></script>
   <script src="./app.js" defer></script>
+  <script src="./history.js" defer></script>
 </body>
 </html>
