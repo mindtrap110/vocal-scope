@@ -5,6 +5,14 @@
   const MAX_SESSIONS = 30;
   const MAX_GRAPH_POINTS = 900;
   const CAPTURE_INTERVAL_MS = 90;
+  const PHRASE_GAP_MS = 360;
+  const LANDING_START_MS = 200;
+  const LANDING_END_MS = 500;
+  const SUSTAIN_START_MS = 500;
+  const SUSTAIN_END_MS = 1500;
+  const DRIFT_START_MS = 200;
+  const DRIFT_MAX_END_MS = 4000;
+  const MIN_PHRASE_MS = 650;
   let live = null;
   let selectedSessionId = null;
 
@@ -27,8 +35,9 @@
   }
   function avg(v) { return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; }
   function medianValue(v) {
-    if (!v.length) return 0;
-    const a=[...v].sort((x,y)=>x-y), m=Math.floor(a.length/2);
+    const nums = v.filter(Number.isFinite);
+    if (!nums.length) return null;
+    const a=[...nums].sort((x,y)=>x-y), m=Math.floor(a.length/2);
     return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
   }
   function formatDuration(ms) {
@@ -39,6 +48,18 @@
   function signedCent(v) {
     if (!Number.isFinite(v)) return '—';
     const n=Math.round(v); return `${n>0?'+':''}${n} cent`;
+  }
+  function signedCentShort(v) {
+    if (!Number.isFinite(v)) return '—';
+    const n=Math.round(v); return `${n>0?'+':''}${n}c`;
+  }
+  function signedDrift(v) {
+    if (!Number.isFinite(v)) return '—';
+    const n=Math.round(v); return `${n>0?'+':''}${n} cent/s`;
+  }
+  function signedDriftShort(v) {
+    if (!Number.isFinite(v)) return '—';
+    const n=Math.round(v); return `${n>0?'+':''}${n}c/s`;
   }
   function describeTarget(s) {
     if (Number.isFinite(s.targetMidi)) { const n=noteFromMidi(s.targetMidi); return `${n.name} · ${n.korean}`; }
@@ -65,6 +86,74 @@
     for(let i=0;i<MAX_GRAPH_POINTS;i++){const p=points[Math.min(points.length-1,Math.floor(i*step))];out.push([p.t,p.m]);}
     return out;
   }
+
+  function normalizePoints(points) {
+    if (!Array.isArray(points)) return [];
+    return points.map(p => Array.isArray(p) ? {t:Number(p[0]),m:Number(p[1])} : {t:Number(p.t),m:Number(p.m)})
+      .filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.m)).sort((a,b)=>a.t-b.t);
+  }
+  function splitPhrases(points) {
+    const p=normalizePoints(points), out=[];
+    let current=[];
+    for(const point of p){
+      if(current.length && point.t-current[current.length-1].t>PHRASE_GAP_MS){out.push(current);current=[];}
+      current.push(point);
+    }
+    if(current.length)out.push(current);
+    return out.filter(seg=>seg.length>=5 && seg[seg.length-1].t-seg[0].t>=MIN_PHRASE_MS);
+  }
+  function centForMidi(midi,targetMidi){return (midi-targetMidi)*100;}
+  function medianInWindow(segment,targetMidi,startMs,endMs){
+    const t0=segment[0].t;
+    const values=segment.filter(p=>p.t-t0>=startMs&&p.t-t0<=endMs).map(p=>centForMidi(p.m,targetMidi));
+    return medianValue(values);
+  }
+  function robustSlope(segment,targetMidi){
+    const t0=segment[0].t, endRel=Math.min(DRIFT_MAX_END_MS,segment[segment.length-1].t-t0);
+    const pts=segment.filter(p=>p.t-t0>=DRIFT_START_MS&&p.t-t0<=endRel).map(p=>({x:(p.t-t0)/1000,y:centForMidi(p.m,targetMidi)}));
+    if(pts.length<5 || pts[pts.length-1].x-pts[0].x<0.6)return null;
+    const slopes=[];
+    for(let i=0;i<pts.length-1;i++){
+      for(let j=i+1;j<pts.length;j++){
+        const dx=pts[j].x-pts[i].x;
+        if(dx>=0.25)slopes.push((pts[j].y-pts[i].y)/dx);
+      }
+    }
+    return medianValue(slopes);
+  }
+  function analyzeTechnique(points,targetMidi){
+    if(!Number.isFinite(targetMidi))return null;
+    const phrases=splitPhrases(points), utterances=[];
+    phrases.forEach((seg,index)=>{
+      const t0=seg[0].t, durationMs=seg[seg.length-1].t-t0;
+      const landing=medianInWindow(seg,targetMidi,LANDING_START_MS,LANDING_END_MS);
+      const sustain=durationMs>=1200?medianInWindow(seg,targetMidi,SUSTAIN_START_MS,SUSTAIN_END_MS):null;
+      const drift=robustSlope(seg,targetMidi);
+      if(!Number.isFinite(landing)&&!Number.isFinite(sustain)&&!Number.isFinite(drift))return;
+      utterances.push({
+        index:index+1,startMs:t0,durationMs:Math.round(durationMs),
+        landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,
+        sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,
+        driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null
+      });
+    });
+    if(!utterances.length)return null;
+    const landing=medianValue(utterances.map(x=>x.landingCents));
+    const sustain=medianValue(utterances.map(x=>x.sustainCents));
+    const drift=medianValue(utterances.map(x=>x.driftCentsPerSec));
+    return {
+      landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,
+      sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,
+      driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null,
+      utteranceCount:utterances.length,
+      utterances:utterances.slice(0,20)
+    };
+  }
+  function getTechnique(s){
+    if(s?.technique && Number.isFinite(s.technique.utteranceCount))return s.technique;
+    return analyzeTechnique(s?.points || [], s?.targetMidi);
+  }
+
   function buildSessionRecord() {
     if (!live || live.points.length<5 || live.voicedMs<700) return null;
     const target=live.targetMidi;
@@ -78,13 +167,15 @@
       lastT=p.t;
     }
     const midis=live.points.map(p=>p.m);
+    const med=medianValue(deviations);
     return {
       id:`${live.startedAt}-${Math.random().toString(36).slice(2,7)}`, createdAt:live.startedAt,
       durationMs:Math.max(0,Date.now()-live.startedAt), voicedMs:Math.round(live.voicedMs),
       targetMidi:Number.isFinite(target)?target:null, accuracy:Math.round(accuracy*10)/10,
       avgAbsCents:Math.round(avgAbs*10)/10, biasCents:Math.round(bias*10)/10,
-      medianCents:Math.round(medianValue(deviations)*10)/10, longestInTuneMs:Math.round(longest),
+      medianCents:Number.isFinite(med)?Math.round(med*10)/10:null, longestInTuneMs:Math.round(longest),
       minMidi:Math.min(...midis), maxMidi:Math.max(...midis), sampleCount:live.points.length,
+      technique:analyzeTechnique(live.points,target),
       points:compressPoints(live.points)
     };
   }
@@ -109,22 +200,32 @@
     const a=readSessions().filter(s=>s.targetMidi===targetMidi).slice(0,5);if(a.length<2)return null;
     return a[0].accuracy-avg(a.slice(1).map(s=>s.accuracy));
   }
+  function buildTechniqueDiagnosis(tech){
+    if(!tech)return '1초 이상 이어진 목표음 발성이 부족해 착지·유지·드리프트를 계산하지 못했습니다.';
+    const l=tech.landingCents,s=tech.sustainCents,d=tech.driftCentsPerSec;
+    if(Number.isFinite(l)&&Math.abs(l)<=15&&Number.isFinite(s)&&s<-15&&Number.isFinite(d)&&d<-8)return '처음에는 목표음에 잘 착지했지만, 유지하면서 음정이 아래로 떨어졌습니다.';
+    if(Number.isFinite(l)&&Math.abs(l)<=15&&Number.isFinite(s)&&s>15&&Number.isFinite(d)&&d>8)return '처음에는 목표음에 잘 착지했지만, 유지하면서 음정이 위로 올라갔습니다.';
+    if(Number.isFinite(l)&&Math.abs(l)>15&&Number.isFinite(s)&&Math.abs(s)<=15)return '첫 착지는 목표음에서 벗어났지만, 0.5~1.5초 사이에 목표음을 찾아 들어갔습니다.';
+    if(Number.isFinite(l)&&Math.abs(l)>15)return `첫 착지부터 목표음보다 ${l<0?'낮게':'높게'} 시작하는 경향이 보였습니다.`;
+    if(Number.isFinite(s)&&Math.abs(s)<=15&&Number.isFinite(d)&&Math.abs(d)<=8)return '착지와 유지가 모두 목표음 근처에 있고, 시간에 따른 드리프트도 작았습니다.';
+    if(Number.isFinite(d)&&d<-8)return '발성 중 시간이 지날수록 음정이 낮아지는 경향이 보였습니다.';
+    if(Number.isFinite(d)&&d>8)return '발성 중 시간이 지날수록 음정이 높아지는 경향이 보였습니다.';
+    return '착지와 유지 구간을 따로 확인해 어느 단계에서 오차가 생겼는지 비교해 보세요.';
+  }
   function buildCoachText(s){
-    const p=[];
+    const p=[],tech=getTechnique(s);
     if(Number.isFinite(s.targetMidi)){
-      if(s.accuracy>=80&&s.avgAbsCents<=10)p.push('목표음 중심을 상당히 안정적으로 유지했습니다.');
-      else if(s.accuracy>=55)p.push('목표음 근처에는 잘 접근하지만 중심에 머무는 시간을 더 늘리면 좋습니다.');
-      else p.push('정확히 맞는 순간보다 목표음 밖에 있는 시간이 더 길었습니다. 처음 1초는 음을 찾고, 그다음 2~3초를 유지하는 연습이 좋습니다.');
-      if(s.biasCents<=-7)p.push(`평균적으로 ${Math.abs(Math.round(s.biasCents))} cent 낮았습니다. 시작부터 목표음을 조금 더 위로 겨냥해 보세요.`);
-      else if(s.biasCents>=7)p.push(`평균적으로 ${Math.round(s.biasCents)} cent 높았습니다. 시작음을 과하게 끌어올리지 않는 데 집중하세요.`);
-      else p.push('평균적인 높낮이 치우침은 크지 않습니다.');
+      p.push(buildTechniqueDiagnosis(tech));
+      if(tech){
+        if(Number.isFinite(tech.landingCents)&&Math.abs(tech.landingCents)>15)p.push('다음 반복에서는 소리를 길게 유지하기보다 먼저 시작 0.5초 안에 목표음 중심에 바로 들어가는 데 집중하세요.');
+        else if(Number.isFinite(tech.sustainCents)&&Math.abs(tech.sustainCents)>15)p.push('첫 음은 그대로 두고, 그 뒤 1초 동안 같은 높이를 유지하는 데 집중하세요.');
+        if(Number.isFinite(tech.driftCentsPerSec)&&Math.abs(tech.driftCentsPerSec)>12)p.push(`드리프트는 ${signedDrift(tech.driftCentsPerSec)}입니다. 처음 맞춘 높이를 기준으로 2~3초 동안 선을 수평으로 만드는 연습이 좋습니다.`);
+      }
       const trend=trendForTarget(s.targetMidi);
-      if(trend!=null&&Math.abs(trend)>=4)p.push(trend>0?`최근 같은 목표음 기록보다 정확률이 약 ${Math.round(trend)}%p 좋아졌습니다.`:`최근 같은 목표음 평균보다 정확률이 약 ${Math.abs(Math.round(trend))}%p 낮았습니다.`);
+      if(trend!=null&&Math.abs(trend)>=4)p.push(trend>0?`최근 같은 목표음 기록보다 ±15 cent 정확률이 약 ${Math.round(trend)}%p 좋아졌습니다.`:`최근 같은 목표음 평균보다 ±15 cent 정확률이 약 ${Math.abs(Math.round(trend))}%p 낮았습니다.`);
     }else{
       if(s.avgAbsCents<=10)p.push('각 음의 중심에 가까이 머문 비율이 좋았습니다.');
-      else p.push('음의 중심을 통과한 뒤 흔들리는 구간이 있습니다. 한 음씩 2~3초 고정하는 목표음 연습을 병행해 보세요.');
-      if(s.biasCents<=-7)p.push('전체적으로 음 중심보다 낮은 쪽에 머무는 경향이 보였습니다.');
-      else if(s.biasCents>=7)p.push('전체적으로 음 중심보다 높은 쪽에 머무는 경향이 보였습니다.');
+      else p.push('자유 측정은 전체 흐름 확인용입니다. 착지·유지·드리프트 진단은 목표음을 선택한 연습에서 계산됩니다.');
     }
     return p.join(' ');
   }
@@ -134,12 +235,22 @@
     if(!list||!empty||!summary)return;
     const sessions=readSessions();list.innerHTML='';empty.classList.toggle('hidden',sessions.length>0);
     if(!sessions.length){summary.innerHTML='<strong>아직 기록 없음</strong><span>측정을 끝내면 자동 저장됩니다.</span>';return;}
-    const recent=sessions.slice(0,5), accuracyAvg=avg(recent.map(s=>s.accuracy)), best=Math.max(...recent.map(s=>s.accuracy));
-    summary.innerHTML=`<strong>최근 ${recent.length}회 평균 ${Math.round(accuracyAvg)}%</strong><span>최근 최고 ${Math.round(best)}% · 기록 ${sessions.length}개</span>`;
+    const recent=sessions.slice(0,5), targetRecent=recent.filter(s=>Number.isFinite(s.targetMidi)).map(s=>({s,tech:getTechnique(s)})).filter(x=>x.tech);
+    if(targetRecent.length){
+      const landingAbs=medianValue(targetRecent.map(x=>x.tech.landingCents).filter(Number.isFinite).map(Math.abs));
+      const sustainAbs=medianValue(targetRecent.map(x=>x.tech.sustainCents).filter(Number.isFinite).map(Math.abs));
+      const drift=medianValue(targetRecent.map(x=>x.tech.driftCentsPerSec).filter(Number.isFinite));
+      summary.innerHTML=`<strong>최근 착지 ${Number.isFinite(landingAbs)?Math.round(landingAbs)+'c':'—'} · 유지 ${Number.isFinite(sustainAbs)?Math.round(sustainAbs)+'c':'—'}</strong><span>드리프트 중앙값 ${Number.isFinite(drift)?signedDriftShort(drift):'—'} · 기록 ${sessions.length}개</span>`;
+    }else{
+      const accuracyAvg=avg(recent.map(s=>s.accuracy)), best=Math.max(...recent.map(s=>s.accuracy));
+      summary.innerHTML=`<strong>최근 ${recent.length}회 평균 ${Math.round(accuracyAvg)}%</strong><span>최근 최고 ${Math.round(best)}% · 기록 ${sessions.length}개</span>`;
+    }
     recent.slice(0,3).forEach(s=>{
       const row=document.createElement('button');row.type='button';row.className='history-row';
+      const tech=getTechnique(s);
       const score=Number.isFinite(s.targetMidi)?`${Math.round(s.accuracy)}% 정확`:`${noteFromMidi(s.minMidi).name}–${noteFromMidi(s.maxMidi).name}`;
-      row.innerHTML=`<span class="history-row-main"><strong>${describeTarget(s)}</strong><small>${nowDateLabel(s.createdAt)} · ${formatDuration(s.voicedMs)} 유효</small></span><span class="history-row-score"><strong>${score}</strong><small>평균 오차 ${Math.round(s.avgAbsCents)}c</small></span><span class="history-chevron">›</span>`;
+      const detail=Number.isFinite(s.targetMidi)&&tech?`착지 ${signedCentShort(tech.landingCents)} · 드리프트 ${signedDriftShort(tech.driftCentsPerSec)}`:`전체 평균 오차 ${Math.round(s.avgAbsCents)}c`;
+      row.innerHTML=`<span class="history-row-main"><strong>${describeTarget(s)}</strong><small>${nowDateLabel(s.createdAt)} · ${formatDuration(s.voicedMs)} 유효</small></span><span class="history-row-score"><strong>${score}</strong><small>${detail}</small></span><span class="history-chevron">›</span>`;
       row.addEventListener('click',()=>openSession(s.id));list.appendChild(row);
     });
   }
@@ -147,18 +258,35 @@
     const host=document.getElementById('allHistoryList');if(!host)return;const sessions=readSessions();host.innerHTML='';
     if(!sessions.length){host.innerHTML='<p class="history-empty">저장된 연습 기록이 없습니다.</p>';return;}
     sessions.forEach(s=>{
-      const b=document.createElement('button');b.type='button';b.className='all-history-row';
-      b.innerHTML=`<span><strong>${describeTarget(s)}</strong><small>${fullDateLabel(s.createdAt)}</small></span><span><strong>${Math.round(s.accuracy)}%</strong><small>${Math.round(s.avgAbsCents)}c 평균 오차</small></span>`;
+      const b=document.createElement('button');b.type='button';b.className='all-history-row',tech=getTechnique(s);
+      const sub=Number.isFinite(s.targetMidi)&&tech?`착지 ${signedCentShort(tech.landingCents)} · 유지 ${signedCentShort(tech.sustainCents)} · ${signedDriftShort(tech.driftCentsPerSec)}`:`${Math.round(s.avgAbsCents)}c 전체 평균 오차`;
+      b.innerHTML=`<span><strong>${describeTarget(s)}</strong><small>${fullDateLabel(s.createdAt)}</small></span><span><strong>${Math.round(s.accuracy)}%</strong><small>${sub}</small></span>`;
       b.addEventListener('click',()=>{document.getElementById('historyDialog').close();openSession(s.id);});host.appendChild(b);
+    });
+  }
+  function renderUtteranceBreakdown(tech){
+    const host=document.getElementById('sessionUtteranceList'),count=document.getElementById('sessionTechniqueCount');if(!host||!count)return;
+    host.innerHTML='';
+    if(!tech?.utterances?.length){count.textContent='분석 가능한 발성 없음';host.innerHTML='<p class="utterance-empty">목표음을 1.5초 이상 이어서 내면 발성별 분석이 생깁니다.</p>';return;}
+    count.textContent=`발성 ${tech.utteranceCount}회 기준`;
+    tech.utterances.forEach((u,i)=>{
+      const row=document.createElement('div');row.className='utterance-row';
+      row.innerHTML=`<span class="utterance-index">${i+1}회</span><span><small>초기 착지</small><strong>${signedCentShort(u.landingCents)}</strong></span><span><small>유지</small><strong>${signedCentShort(u.sustainCents)}</strong></span><span><small>드리프트</small><strong>${signedDriftShort(u.driftCentsPerSec)}</strong></span><span class="utterance-duration">${formatDuration(u.durationMs)}</span>`;
+      host.appendChild(row);
     });
   }
   function openSession(id){
     const s=readSessions().find(x=>x.id===id);if(!s)return;selectedSessionId=id;
+    const tech=getTechnique(s);
     document.getElementById('sessionTitle').textContent=describeTarget(s);document.getElementById('sessionDate').textContent=fullDateLabel(s.createdAt);
+    document.getElementById('sessionLanding').textContent=tech?signedCent(tech.landingCents):'—';
+    document.getElementById('sessionSustain').textContent=tech?signedCent(tech.sustainCents):'—';
+    document.getElementById('sessionDrift').textContent=tech?signedDrift(tech.driftCentsPerSec):'—';
+    document.getElementById('sessionTechniqueHint').textContent=Number.isFinite(s.targetMidi)?buildTechniqueDiagnosis(tech):'착지·유지·드리프트는 목표음을 선택한 연습에서 계산됩니다.';
     document.getElementById('sessionAccuracy').textContent=`${Math.round(s.accuracy)}%`;document.getElementById('sessionError').textContent=`${Math.round(s.avgAbsCents)} cent`;
     document.getElementById('sessionBias').textContent=signedCent(s.biasCents);document.getElementById('sessionLongest').textContent=formatDuration(s.longestInTuneMs);
     document.getElementById('sessionVoiced').textContent=formatDuration(s.voicedMs);document.getElementById('sessionRange').textContent=`${noteFromMidi(s.minMidi).name} – ${noteFromMidi(s.maxMidi).name}`;
-    document.getElementById('sessionCoach').textContent=buildCoachText(s);
+    document.getElementById('sessionCoach').textContent=buildCoachText(s);renderUtteranceBreakdown(tech);
     const retry=document.getElementById('retryTargetBtn');retry.classList.toggle('hidden',!Number.isFinite(s.targetMidi));
     retry.onclick=()=>{setTarget(s.targetMidi);document.getElementById('sessionDialog').close();window.scrollTo({top:0,behavior:'smooth'});};
     document.getElementById('deleteSessionBtn').onclick=()=>deleteSession(id);
@@ -171,7 +299,7 @@
     const canvas=document.getElementById('historyCanvas');if(!canvas||!s?.points?.length)return;
     const rect=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,3);canvas.width=Math.max(1,Math.round(rect.width*dpr));canvas.height=Math.max(1,Math.round(rect.height*dpr));
     const ctx=canvas.getContext('2d'),W=rect.width,H=rect.height;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);ctx.fillStyle='#0a1120';ctx.fillRect(0,0,W,H);
-    const points=s.points.map(p=>({t:p[0],m:p[1]})),midis=points.map(p=>p.m),center=Number.isFinite(s.targetMidi)?s.targetMidi:medianValue(midis);
+    const points=normalizePoints(s.points),midis=points.map(p=>p.m),center=Number.isFinite(s.targetMidi)?s.targetMidi:medianValue(midis);
     const low=Math.floor(Math.min(center-3,Math.min(...midis)-1)),high=Math.ceil(Math.max(center+3,Math.max(...midis)+1)),span=Math.max(6,high-low);
     const labelW=36,left=labelW,right=W-8,top=10,bottom=H-20,dur=Math.max(1,points[points.length-1].t),x=t=>left+(t/dur)*(right-left),y=m=>top+(high-m)/span*(bottom-top);
     ctx.font='10px -apple-system,BlinkMacSystemFont,sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';
@@ -179,8 +307,16 @@
     if(Number.isFinite(s.targetMidi)){
       const upper=y(s.targetMidi+0.15),lower=y(s.targetMidi-0.15);ctx.fillStyle='rgba(95,224,174,.08)';ctx.fillRect(left,upper,right-left,lower-upper);
       const yy=y(s.targetMidi);ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='rgba(124,156,255,.95)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.restore();
+      splitPhrases(points).forEach(seg=>{
+        const t0=seg[0].t, tEnd=seg[seg.length-1].t;
+        const lx1=x(Math.min(tEnd,t0+LANDING_START_MS)),lx2=x(Math.min(tEnd,t0+LANDING_END_MS));
+        if(lx2>lx1){ctx.fillStyle='rgba(124,156,255,.07)';ctx.fillRect(lx1,top,lx2-lx1,bottom-top);}
+        const sx1=x(Math.min(tEnd,t0+SUSTAIN_START_MS)),sx2=x(Math.min(tEnd,t0+SUSTAIN_END_MS));
+        if(sx2>sx1){ctx.fillStyle='rgba(101,225,194,.045)';ctx.fillRect(sx1,top,sx2-sx1,bottom-top);}
+      });
     }
-    ctx.strokeStyle='#68e0c3';ctx.lineWidth=2;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();points.forEach((p,i)=>{const xx=x(p.t),yy=y(p.m);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();
+    ctx.strokeStyle='#68e0c3';ctx.lineWidth=2;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();let drawing=false,lastT=null;
+    points.forEach(p=>{const xx=x(p.t),yy=y(p.m);if(!drawing||lastT==null||p.t-lastT>PHRASE_GAP_MS){ctx.moveTo(xx,yy);drawing=true;}else ctx.lineTo(xx,yy);lastT=p.t;});ctx.stroke();
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='rgba(154,167,195,.62)';ctx.fillText('시작',left,bottom+5);ctx.textAlign='right';ctx.fillText(formatDuration(dur),right,bottom+5);
   }
   function clearAllHistory(){
