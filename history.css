@@ -23,9 +23,34 @@
 .all-history-row strong { display:block; font-size:13px; }
 .all-history-row small { display:block; color:var(--muted); font-size:10px; margin-top:4px; }
 .danger-btn { width:100%; min-height:48px; margin-top:12px; border-radius:15px; border:1px solid rgba(255,125,142,.20); background:rgba(255,125,142,.07); color:#ff9dac; font-weight:700; }
+.technique-title-row { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:9px; }
+.technique-title-row h3 { margin:3px 0 0; font-size:18px; letter-spacing:-.025em; }
+.technique-count { color:var(--muted); font-size:11px; white-space:nowrap; }
+.technique-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.technique-metric { min-width:0; border:1px solid var(--line); border-radius:16px; padding:12px 10px; background:rgba(255,255,255,.025); }
+.technique-metric span { display:block; color:#dce6fb; font-size:11px; font-weight:700; }
+.technique-metric strong { display:block; margin-top:7px; font-size:20px; line-height:1; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.technique-metric small { display:block; min-height:27px; margin-top:7px; color:var(--muted); font-size:9px; line-height:1.4; }
+.technique-metric.landing { border-color:rgba(124,156,255,.23); background:rgba(124,156,255,.065); }
+.technique-metric.sustain { border-color:rgba(101,225,194,.20); background:rgba(101,225,194,.05); }
+.technique-metric.drift { border-color:rgba(255,209,102,.18); background:rgba(255,209,102,.045); }
+.technique-hint { margin-top:8px; border:1px solid rgba(124,156,255,.13); border-radius:14px; background:rgba(124,156,255,.045); padding:11px 12px; color:#d6e0f4; font-size:11px; line-height:1.55; }
+.utterance-panel { margin-top:10px; border:1px solid var(--line); border-radius:16px; padding:11px; background:rgba(255,255,255,.018); }
+.utterance-panel-title { color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.04em; margin-bottom:7px; }
+.utterance-list { display:grid; gap:6px; }
+.utterance-row { display:grid; grid-template-columns:30px repeat(3,minmax(0,1fr)) 38px; align-items:center; gap:6px; border-top:1px solid rgba(255,255,255,.055); padding-top:7px; }
+.utterance-row:first-child { border-top:0; padding-top:0; }
+.utterance-index { color:#dce6fb; font-size:11px; font-weight:750; }
+.utterance-row span:not(.utterance-index):not(.utterance-duration) { min-width:0; }
+.utterance-row small { display:block; color:var(--muted); font-size:8px; margin-bottom:2px; }
+.utterance-row strong { display:block; font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.utterance-duration { color:#75839f; font-size:9px; text-align:right; white-space:nowrap; }
+.utterance-empty { margin:0; color:var(--muted); font-size:11px; line-height:1.5; }
 .session-main-score { border:1px solid rgba(101,225,194,.20); background:linear-gradient(135deg,rgba(101,225,194,.09),rgba(124,156,255,.07)); border-radius:18px; padding:15px; display:flex; justify-content:space-between; align-items:center; }
+.session-main-score.secondary-score { margin-top:10px; padding:11px 13px; background:rgba(255,255,255,.025); border-color:var(--line); }
 .session-main-score span { color:var(--muted); font-size:12px; }
 .session-main-score strong { color:var(--accent2); font-size:32px; letter-spacing:-.04em; }
+.session-main-score.secondary-score strong { font-size:22px; }
 .session-stat-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:9px; }
 .session-stat-grid div { border:1px solid var(--line); border-radius:14px; padding:10px; background:rgba(255,255,255,.025); min-width:0; }
 .session-stat-grid span { display:block; color:var(--muted); font-size:10px; margin-bottom:5px; }
@@ -44,4 +69,10 @@
   .history-summary span { text-align:left; }
   .history-row { grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) 10px; }
   .history-graph-wrap { height:230px; }
+  .technique-grid { grid-template-columns:1fr; }
+  .technique-metric { display:grid; grid-template-columns:1fr auto; column-gap:10px; align-items:center; }
+  .technique-metric strong { grid-column:2; grid-row:1 / span 2; margin:0; font-size:19px; }
+  .technique-metric small { min-height:0; margin-top:3px; }
+  .utterance-row { grid-template-columns:27px repeat(3,minmax(0,1fr)); }
+  .utterance-duration { display:none; }
 }
