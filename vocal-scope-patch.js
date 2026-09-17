@@ -1,359 +1,83 @@
+(function(root,factory){
+  const api=factory();
+  if(typeof module==='object'&&module.exports)module.exports=api;
+  else root.VocalPracticeCore=api;
+})(typeof self!=='undefined'?self:globalThis,function(){
+  'use strict';
+  const DEFAULTS={gapMs:360,landingStartMs:200,landingEndMs:500,sustainStartMs:500,sustainEndMs:1500,driftStartMs:200,driftMaxEndMs:4000,toleranceCents:15,captureIntervalMs:90};
+  function median(values){const a=values.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
+  function average(values){const a=values.filter(Number.isFinite);return a.length?a.reduce((s,x)=>s+x,0)/a.length:0;}
+  function normalizePoints(points){if(!Array.isArray(points))return[];return points.map(p=>Array.isArray(p)?{t:Number(p[0]),m:Number(p[1])}:{t:Number(p.t),m:Number(p.m)}).filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.m)).sort((a,b)=>a.t-b.t);}
+  function segmentPhrases(points,gapMs=DEFAULTS.gapMs){const src=normalizePoints(points),out=[];let cur=[];for(const p of src){if(cur.length&&p.t-cur[cur.length-1].t>gapMs){out.push(cur);cur=[];}cur.push(p);}if(cur.length)out.push(cur);return out;}
+  function medianInWindow(seg,ref,startMs,endMs){if(!seg.length)return null;const t0=seg[0].t;return median(seg.filter(p=>p.t-t0>=startMs&&p.t-t0<=endMs).map(p=>(p.m-ref)*100));}
+  function robustSlope(seg,ref,opts=DEFAULTS){if(!seg.length)return null;const t0=seg[0].t,endRel=Math.min(opts.driftMaxEndMs??DEFAULTS.driftMaxEndMs,seg[seg.length-1].t-t0);const pts=seg.filter(p=>p.t-t0>=(opts.driftStartMs??DEFAULTS.driftStartMs)&&p.t-t0<=endRel).map(p=>({x:(p.t-t0)/1000,y:(p.m-ref)*100}));if(pts.length<5||pts[pts.length-1].x-pts[0].x<0.6)return null;const slopes=[];for(let i=0;i<pts.length-1;i++)for(let j=i+1;j<pts.length;j++){const dx=pts[j].x-pts[i].x;if(dx>=0.25)slopes.push((pts[j].y-pts[i].y)/dx);}return median(slopes);}
+  function expectedForIndex(plan,index){if(!plan||!Array.isArray(plan.pattern)||!plan.pattern.length)return null;const m=Number(plan.pattern[index%plan.pattern.length]);return Number.isFinite(m)?m:null;}
+  function analyzeTechnique(points,options={}){const cfg={...DEFAULTS,...options};const targetMidi=Number.isFinite(options.targetMidi)?options.targetMidi:null;const plan=options.plan||null;const segments=segmentPhrases(points,cfg.gapMs),utterances=[];segments.forEach((seg,index)=>{if(!seg.length)return;const medianMidi=median(seg.map(p=>p.m));if(!Number.isFinite(medianMidi))return;const centerMidi=Math.round(medianMidi),expectedMidi=expectedForIndex(plan,index),referenceMidi=Number.isFinite(expectedMidi)?expectedMidi:(Number.isFinite(targetMidi)?targetMidi:centerMidi),t0=seg[0].t,durationMs=Math.max(cfg.captureIntervalMs,seg[seg.length-1].t-t0+cfg.captureIntervalMs);const landing=medianInWindow(seg,referenceMidi,cfg.landingStartMs,cfg.landingEndMs);const sustain=durationMs>=cfg.sustainStartMs?medianInWindow(seg,referenceMidi,cfg.sustainStartMs,cfg.sustainEndMs):null;const drift=robustSlope(seg,referenceMidi,cfg);utterances.push({index:index+1,startMs:t0,endMs:seg[seg.length-1].t,durationMs:Math.round(durationMs),sampleCount:seg.length,medianMidi:Math.round(medianMidi*1000)/1000,centerMidi,expectedMidi:Number.isFinite(expectedMidi)?expectedMidi:null,referenceMidi,centerOffsetCents:Math.round((medianMidi-centerMidi)*1000)/10,referenceOffsetCents:Math.round((medianMidi-referenceMidi)*1000)/10,landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null});});if(!utterances.length)return null;const landing=median(utterances.map(u=>u.landingCents)),sustain=median(utterances.map(u=>u.sustainCents)),drift=median(utterances.map(u=>u.driftCentsPerSec));return{analysisVersion:3,referenceMode:plan?'planned-sequence':Number.isFinite(targetMidi)?'target':'nearest-note',landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null,utteranceCount:utterances.length,utterances};}
+  function analyzeIntervals(tech,plan=null){const u=tech?.utterances||[],out=[];for(let i=0;i<u.length-1;i++){const a=u[i],b=u[i+1];if(!Number.isFinite(a.medianMidi)||!Number.isFinite(b.medianMidi))continue;const actual=(b.medianMidi-a.medianMidi)*100;let target=null;if(plan&&Array.isArray(plan.pattern)&&plan.pattern.length){const e1=expectedForIndex(plan,i),e2=expectedForIndex(plan,i+1);if(Number.isFinite(e1)&&Number.isFinite(e2))target=(e2-e1)*100;}if(!Number.isFinite(target))target=(b.centerMidi-a.centerMidi)*100;out.push({index:i+1,fromIndex:a.index,toIndex:b.index,actualCents:Math.round(actual*10)/10,targetCents:Math.round(target*10)/10,errorCents:Math.round((actual-target)*10)/10,fromMedianMidi:a.medianMidi,toMedianMidi:b.medianMidi,fromExpectedMidi:a.expectedMidi,toExpectedMidi:b.expectedMidi});}return out;}
+  function estimateVoicedMs(points,cfg={}){const gapMs=cfg.gapMs??DEFAULTS.gapMs,interval=cfg.captureIntervalMs??DEFAULTS.captureIntervalMs;return segmentPhrases(points,gapMs).reduce((sum,seg)=>sum+(seg.length?Math.max(interval,seg[seg.length-1].t-seg[0].t+interval):0),0);}
+  function sessionMetrics(points,targetMidi,toleranceCents=DEFAULTS.toleranceCents){const p=normalizePoints(points);if(!p.length)return null;const target=Number.isFinite(targetMidi)?targetMidi:null;const deviations=p.map(x=>target!=null?(x.m-target)*100:(x.m-Math.round(x.m))*100),inTune=deviations.map(c=>Math.abs(c)<=toleranceCents),accuracy=100*inTune.filter(Boolean).length/inTune.length;let longest=0,streak=0,lastT=null;for(let i=0;i<p.length;i++){const dt=lastT==null?DEFAULTS.captureIntervalMs:Math.min(220,Math.max(0,p[i].t-lastT));if(inTune[i]){streak+=dt;longest=Math.max(longest,streak);}else streak=0;lastT=p[i].t;}return{accuracy:Math.round(accuracy*10)/10,avgAbsCents:Math.round(average(deviations.map(Math.abs))*10)/10,biasCents:Math.round(average(deviations)*10)/10,medianCents:Math.round((median(deviations)??0)*10)/10,longestInTuneMs:Math.round(longest),minMidi:Math.min(...p.map(x=>x.m)),maxMidi:Math.max(...p.map(x=>x.m)),sampleCount:p.length,voicedMs:Math.round(estimateVoicedMs(p))};}
+  function classify(tech,intervals=[]){if(!tech)return{code:'too-short',text:'음정은 저장됐지만 세부 분석에 필요한 데이터가 부족합니다.'};const l=tech.landingCents,s=tech.sustainCents,d=tech.driftCentsPerSec;const badInt=intervals.filter(x=>Number.isFinite(x.errorCents)&&Math.abs(x.errorCents)>20);if(badInt.length){const med=median(badInt.map(x=>x.errorCents));return{code:'interval',text:`발성 간 이동량이 목표 간격에서 벗어나는 경향이 있습니다. 간격 오차 중앙값은 ${Math.round(med)} cent입니다.`};}if(Number.isFinite(l)&&Math.abs(l)>20&&Number.isFinite(s)&&Math.abs(s)<=15)return{code:'late-correction',text:'처음 착지는 빗나가지만 유지 구간에서 목표음을 찾아 들어가는 경향이 있습니다.'};if(Number.isFinite(l)&&Math.abs(l)<=15&&Number.isFinite(s)&&Math.abs(s)>18&&Number.isFinite(d)&&Math.abs(d)>10)return{code:'drift',text:`처음 착지는 좋지만 유지하면서 음정이 ${d<0?'낮아지는':'높아지는'} 경향이 있습니다.`};if(Number.isFinite(l)&&Math.abs(l)>20&&(!Number.isFinite(s)||Math.abs(s)>20))return{code:'landing',text:'발성 시작부터 목표음 중심을 놓치는 경향이 있습니다.'};if(Number.isFinite(l)&&Math.abs(l)<=15&&(!Number.isFinite(s)||Math.abs(s)<=15)&&(!Number.isFinite(d)||Math.abs(d)<=10))return{code:'stable',text:'착지와 유지가 비교적 안정적입니다.'};return{code:'mixed',text:'착지·유지·드리프트를 따로 비교하면 문제 구간을 더 정확히 볼 수 있습니다.'};}
+  return{DEFAULTS,median,average,normalizePoints,segmentPhrases,analyzeTechnique,analyzeIntervals,estimateVoicedMs,sessionMetrics,classify};
+});
+
 'use strict';
 
 (() => {
-  const STORAGE_KEY = 'vocalScopePracticeHistoryV1';
-  const MAX_SESSIONS = 30;
-  const CAPTURE_INTERVAL_MS = 90;
-  const PHRASE_GAP_MS = 360;
-  const ANALYSIS_VERSION = 2;
-  const TARGET_TOLERANCE_CENTS = 15;
+  const state={active:false,baseMidi:null,delta:0,previousTarget:null,results:[],current:[],currentExpected:null,lastPitchAt:null,finalizeTimer:null};
+  function note(m){return window.VocalScope?.noteFromMidi?.(m)||{name:'—',korean:'—'};}
+  function median(a){const n=a.filter(Number.isFinite).sort((x,y)=>x-y);if(!n.length)return null;const m=Math.floor(n.length/2);return n.length%2?n[m]:(n[m-1]+n[m])/2;}
+  function signed(v,suffix='c'){if(!Number.isFinite(v))return'—';const n=Math.round(v);return`${n>0?'+':''}${n}${suffix}`;}
+  function pattern(){return state.active?[state.baseMidi,state.baseMidi+state.delta]:[];}
+  function expectedForIndex(i){const p=pattern();return p.length?p[i%p.length]:null;}
+  function injectStyles(){if(document.getElementById('trainerStyles'))return;const s=document.createElement('style');s.id='trainerStyles';s.textContent=`
+    .trainer-card{margin-top:12px;padding:16px}.trainer-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.trainer-head h2{margin:3px 0 0;font-size:20px}.trainer-presets{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:12px}.trainer-presets button,.trainer-mini-btn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:12px;min-height:42px;font-weight:700}.trainer-presets button:active,.trainer-mini-btn:active{background:rgba(124,156,255,.12)}.trainer-guide{color:var(--muted);font-size:11px;line-height:1.5;margin:10px 2px 0}.trainer-active{margin-top:11px;border:1px solid rgba(124,156,255,.18);border-radius:16px;padding:12px;background:linear-gradient(135deg,rgba(124,156,255,.08),rgba(101,225,194,.04))}.trainer-active-top{display:flex;justify-content:space-between;gap:10px;align-items:center}.trainer-route strong{display:block;font-size:15px}.trainer-route small{display:block;color:var(--muted);font-size:10px;margin-top:3px}.trainer-next{text-align:right}.trainer-next small{display:block;color:var(--muted);font-size:9px}.trainer-next strong{display:block;font-size:22px;color:#dfe8ff}.trainer-live{margin-top:10px;border-radius:12px;background:rgba(0,0,0,.14);padding:10px 11px;font-size:11px;line-height:1.5;color:#d6e0f3}.trainer-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.trainer-stop{color:#ffb7c1!important;border-color:rgba(255,125,142,.2)!important}.trainer-badge{font-size:9px;border:1px solid rgba(101,225,194,.2);color:var(--accent2);padding:5px 7px;border-radius:999px}.hidden{display:none!important}@media(max-width:420px){.trainer-presets{grid-template-columns:repeat(2,1fr)}}
+  `;document.head.appendChild(s);}
+  function mount(){if(document.getElementById('intervalTrainer'))return;const graph=document.querySelector('.graph-card');if(!graph)return;const el=document.createElement('section');el.id='intervalTrainer';el.className='trainer-card card';el.innerHTML=`
+    <div class="trainer-head"><div><span class="section-kicker">INTERVAL DRILL</span><h2>연속음 훈련</h2></div><span id="trainerBadge" class="trainer-badge">대기</span></div>
+    <div id="trainerIdle"><div class="trainer-presets"><button data-delta="1">반음 ↑</button><button data-delta="-1">반음 ↓</button><button data-delta="2">온음 ↑</button><button data-delta="-2">온음 ↓</button></div><p class="trainer-guide">먼저 ‘측정 기준’에서 첫 음을 고른 뒤 간격을 선택하세요. 발성을 끊어 내면 각 발성과 실제 이동량을 따로 계산합니다.</p></div>
+    <div id="trainerActive" class="trainer-active hidden"><div class="trainer-active-top"><div class="trainer-route"><strong id="trainerRoute">—</strong><small>두 음을 번갈아 발성</small></div><div class="trainer-next"><small>다음 목표</small><strong id="trainerExpected">—</strong></div></div><div id="trainerLive" class="trainer-live">측정을 시작하고 첫 음을 내세요.</div><div class="trainer-actions"><button id="trainerTone" class="trainer-mini-btn" type="button">기준음 듣기</button><button id="trainerStop" class="trainer-mini-btn trainer-stop" type="button">훈련 종료</button></div></div>`;
+    graph.parentNode.insertBefore(el,graph);
+    el.querySelectorAll('[data-delta]').forEach(b=>b.addEventListener('click',()=>start(Number(b.dataset.delta))));
+    document.getElementById('trainerStop').addEventListener('click',stop);
+    document.getElementById('trainerTone').addEventListener('click',()=>{const midi=expectedForIndex(state.results.length);if(Number.isFinite(midi))window.VocalScope.playReferenceTone(midi);});
+  }
+  function start(delta){if(window.VocalScope?.state?.measuring){window.VocalScope?.showError?.('연속음 훈련 설정은 측정을 종료한 뒤 바꿔 주세요. 현재 기록이 섞이지 않도록 한 세션에서는 한 훈련 모드만 사용합니다.');return;}const base=window.VocalScope?.state?.targetMidi;if(!Number.isFinite(base)){window.VocalScope?.showError?.('연속음 훈련을 시작하려면 먼저 위의 ‘측정 기준’에서 첫 음을 선택해 주세요.');return;}state.active=true;state.baseMidi=base;state.delta=delta;state.previousTarget=base;state.results=[];state.current=[];state.currentExpected=null;clearTimeout(state.finalizeTimer);window.VocalScope.setTarget(null,{transient:true});render();}
+  function stop(){finalizeCurrent();state.active=false;clearTimeout(state.finalizeTimer);if(Number.isFinite(state.previousTarget))window.VocalScope.setTarget(state.previousTarget);state.previousTarget=null;render();}
+  function finalizeCurrent(){clearTimeout(state.finalizeTimer);state.finalizeTimer=null;if(!state.current.length)return;const med=median(state.current.map(x=>x.midi));const expected=state.currentExpected;const offset=Number.isFinite(med)&&Number.isFinite(expected)?(med-expected)*100:null;state.results.push({medianMidi:med,expectedMidi:expected,offsetCents:offset});state.current=[];state.currentExpected=null;render();}
+  function onPitch(e){if(!state.active)return;const d=e.detail||{};if(!Number.isFinite(d.midi))return;if(!state.current.length)state.currentExpected=expectedForIndex(state.results.length);state.current.push({midi:d.midi,now:d.now});state.lastPitchAt=d.now;clearTimeout(state.finalizeTimer);state.finalizeTimer=setTimeout(finalizeCurrent,430);renderLive(d.midi);}
+  function renderLive(currentMidi){if(!state.active)return;const expected=state.currentExpected??expectedForIndex(state.results.length);const cents=Number.isFinite(currentMidi)&&Number.isFinite(expected)?(currentMidi-expected)*100:null;const last=state.results[state.results.length-1];let text=`현재 ${note(expected).name} 기준 ${signed(cents)}`;if(state.results.length>=2){const a=state.results[state.results.length-2],b=state.results[state.results.length-1],actual=(b.medianMidi-a.medianMidi)*100,target=(b.expectedMidi-a.expectedMidi)*100;text+=` · 직전 이동 ${signed(actual)} / 목표 ${signed(target)} / 오차 ${signed(actual-target)}`;}else if(last)text+=` · 직전 발성 ${note(last.expectedMidi).name} ${signed(last.offsetCents)}`;const host=document.getElementById('trainerLive');if(host)host.textContent=text;}
+  function render(){if(!document.getElementById('intervalTrainer'))return;const targetBtn=document.getElementById('targetBtn');if(targetBtn)targetBtn.disabled=state.active;document.getElementById('trainerIdle').classList.toggle('hidden',state.active);document.getElementById('trainerActive').classList.toggle('hidden',!state.active);document.getElementById('trainerBadge').textContent=state.active?'훈련 중':'대기';if(!state.active)return;const p=pattern(),a=note(p[0]),b=note(p[1]);document.getElementById('trainerRoute').textContent=`${a.name} ↔ ${b.name}`;const expected=expectedForIndex(state.results.length);document.getElementById('trainerExpected').textContent=note(expected).name;if(!state.current.length){let text=`발성 ${state.results.length+1}: ${note(expected).name} 대기`;if(state.results.length>=2){const x=state.results[state.results.length-2],y=state.results[state.results.length-1],actual=(y.medianMidi-x.medianMidi)*100,target=(y.expectedMidi-x.expectedMidi)*100;text+=` · 직전 간격 오차 ${signed(actual-target)}`;}document.getElementById('trainerLive').textContent=text;}}
+  function resetForMeasurement(){if(!state.active)return;state.results=[];state.current=[];state.currentExpected=null;clearTimeout(state.finalizeTimer);render();}
+  window.addEventListener('vs:pitch',onPitch);
+  window.addEventListener('vs:measurement-start',resetForMeasurement);
+  window.addEventListener('vs:measurement-stop',()=>{if(state.active){finalizeCurrent();render();}});
+  document.addEventListener('DOMContentLoaded',()=>{injectStyles();mount();render();});
+  window.VocalTrainer={isActive:()=>state.active,getPlanSnapshot:()=>state.active?{type:'interval',baseMidi:state.baseMidi,delta:state.delta,pattern:pattern(),label:`${note(state.baseMidi).name}↔${note(state.baseMidi+state.delta).name}`} : null,getLiveResults:()=>state.results.map(x=>({...x})),start,stop};
+})();
 
-  let patchLive = null;
-  let wakeLock = null;
-  let wentHiddenAt = null;
+'use strict';
 
-  function readSessions() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (_) { return []; }
+(() => {
+  let selfTest={ok:false,checks:[],error:null};
+  function runSelfTest(){
+    const P=window.VocalPracticeCore;
+    const checks=[];
+    try{
+      const short=P.sessionMetrics([{t:0,m:57.05}],57);checks.push(['short-save',short?.sampleCount===1&&short?.voicedMs>=80]);
+      const pts=[];[-12,-12,-12,-12].forEach((c,i)=>pts.push({t:i*90,m:57+c/100}));[8,8,8,8].forEach((c,i)=>pts.push({t:800+i*90,m:58+c/100}));
+      const plan={pattern:[57,58]},tech=P.analyzeTechnique(pts,{plan}),ints=P.analyzeIntervals(tech,plan);checks.push(['interval-count',tech?.utteranceCount===2]);checks.push(['interval-error',Math.abs((ints?.[0]?.errorCents??999)-20)<0.2]);
+      const seg=P.segmentPhrases([{t:0,m:57},{t:90,m:57},{t:700,m:58}]);checks.push(['gap-split',seg.length===2]);
+      selfTest={ok:checks.every(x=>x[1]),checks,error:null};
+    }catch(e){selfTest={ok:false,checks,error:String(e?.message||e)};}
+    return selfTest;
   }
-  function writeSessions(items) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, MAX_SESSIONS)));
-      return true;
-    } catch (error) {
-      console.warn('short-session storage', error);
-      return false;
-    }
-  }
-  function median(values) {
-    const nums = values.filter(Number.isFinite).sort((a,b)=>a-b);
-    if (!nums.length) return null;
-    const m = Math.floor(nums.length / 2);
-    return nums.length % 2 ? nums[m] : (nums[m - 1] + nums[m]) / 2;
-  }
-  function average(values) {
-    const nums = values.filter(Number.isFinite);
-    return nums.length ? nums.reduce((a,b)=>a+b,0) / nums.length : 0;
-  }
-  function normalizePoints(points) {
-    if (!Array.isArray(points)) return [];
-    return points.map(p => Array.isArray(p)
-      ? { t:Number(p[0]), m:Number(p[1]) }
-      : { t:Number(p.t), m:Number(p.m) })
-      .filter(p => Number.isFinite(p.t) && Number.isFinite(p.m))
-      .sort((a,b)=>a.t-b.t);
-  }
-  function segment(points) {
-    const src = normalizePoints(points), out = [];
-    let current = [];
-    for (const point of src) {
-      if (current.length && point.t - current[current.length - 1].t > PHRASE_GAP_MS) {
-        out.push(current);
-        current = [];
-      }
-      current.push(point);
-    }
-    if (current.length) out.push(current);
-    return out;
-  }
-  function noteInfo(midi) {
-    try { return noteFromMidi(midi); }
-    catch (_) { return { name:'—', korean:'—', midi:Math.round(midi) }; }
-  }
-  function medianWindow(seg, referenceMidi, fromMs, toMs) {
-    if (!seg.length) return null;
-    const t0 = seg[0].t;
-    return median(seg
-      .filter(p => p.t - t0 >= fromMs && p.t - t0 <= toMs)
-      .map(p => (p.m - referenceMidi) * 100));
-  }
-  function robustSlope(seg, referenceMidi) {
-    if (!seg.length) return null;
-    const t0 = seg[0].t;
-    const pts = seg
-      .filter(p => p.t - t0 >= 200 && p.t - t0 <= 4000)
-      .map(p => ({ x:(p.t - t0) / 1000, y:(p.m - referenceMidi) * 100 }));
-    if (pts.length < 5 || pts[pts.length - 1].x - pts[0].x < 0.6) return null;
-    const slopes = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        const dx = pts[j].x - pts[i].x;
-        if (dx >= 0.25) slopes.push((pts[j].y - pts[i].y) / dx);
-      }
-    }
-    return median(slopes);
-  }
-  function analyzeAllUtterances(points, targetMidi) {
-    const utterances = [];
-    segment(points).forEach((seg, index) => {
-      if (!seg.length) return;
-      const medianMidi = median(seg.map(p=>p.m));
-      if (!Number.isFinite(medianMidi)) return;
-      const centerMidi = Math.round(medianMidi);
-      const ref = Number.isFinite(targetMidi) ? targetMidi : centerMidi;
-      const durationMs = Math.max(0, seg[seg.length - 1].t - seg[0].t);
-      const landing = medianWindow(seg, ref, 200, 500);
-      const sustain = durationMs >= 500 ? medianWindow(seg, ref, 500, 1500) : null;
-      const drift = robustSlope(seg, ref);
-      const note = noteInfo(centerMidi);
-      utterances.push({
-        index:index + 1,
-        startMs:seg[0].t,
-        endMs:seg[seg.length - 1].t,
-        durationMs:Math.round(Math.max(CAPTURE_INTERVAL_MS, durationMs + CAPTURE_INTERVAL_MS)),
-        medianMidi:Math.round(medianMidi * 1000) / 1000,
-        centerMidi,
-        noteName:note.name,
-        noteKorean:note.korean,
-        centerOffsetCents:Math.round((medianMidi - centerMidi) * 1000) / 10,
-        landingCents:Number.isFinite(landing) ? Math.round(landing * 10) / 10 : null,
-        sustainCents:Number.isFinite(sustain) ? Math.round(sustain * 10) / 10 : null,
-        driftCentsPerSec:Number.isFinite(drift) ? Math.round(drift * 10) / 10 : null
-      });
-    });
-    if (!utterances.length) return null;
-    const landing = median(utterances.map(u=>u.landingCents));
-    const sustain = median(utterances.map(u=>u.sustainCents));
-    const drift = median(utterances.map(u=>u.driftCentsPerSec));
-    return {
-      analysisVersion:ANALYSIS_VERSION,
-      referenceMode:Number.isFinite(targetMidi) ? 'target' : 'nearest-note',
-      landingCents:Number.isFinite(landing) ? Math.round(landing * 10) / 10 : null,
-      sustainCents:Number.isFinite(sustain) ? Math.round(sustain * 10) / 10 : null,
-      driftCentsPerSec:Number.isFinite(drift) ? Math.round(drift * 10) / 10 : null,
-      utteranceCount:utterances.length,
-      utterances:utterances.slice(0, 20)
-    };
-  }
-  function estimateVoicedMs(points) {
-    return segment(points).reduce((sum, seg) => {
-      if (!seg.length) return sum;
-      return sum + Math.max(CAPTURE_INTERVAL_MS,
-        seg[seg.length - 1].t - seg[0].t + CAPTURE_INTERVAL_MS);
-    }, 0);
-  }
-  function compressPoints(points, limit=900) {
-    const p = normalizePoints(points);
-    if (p.length <= limit) return p.map(x=>[x.t,x.m]);
-    const step = p.length / limit, out = [];
-    for (let i=0; i<limit; i++) {
-      const point = p[Math.min(p.length-1,Math.floor(i*step))];
-      out.push([point.t,point.m]);
-    }
-    return out;
-  }
-  function buildCompatibleRecord(live) {
-    const points = normalizePoints(live?.points || []);
-    if (!points.length) return null;
-    const target = Number.isFinite(live.targetMidi) ? live.targetMidi : null;
-    const deviations = points.map(p => target != null ? (p.m - target) * 100 : (p.m - Math.round(p.m)) * 100);
-    const inTune = deviations.map(c => Math.abs(c) <= TARGET_TOLERANCE_CENTS);
-    const accuracy = 100 * inTune.filter(Boolean).length / inTune.length;
-    const avgAbs = average(deviations.map(Math.abs));
-    const bias = average(deviations);
-    const midis = points.map(p=>p.m);
-    const voicedMs = estimateVoicedMs(points);
-    let longest = 0, streak = 0, lastT = null;
-    for (let i=0; i<points.length; i++) {
-      const dt = lastT == null ? CAPTURE_INTERVAL_MS : Math.min(220, Math.max(0, points[i].t - lastT));
-      if (inTune[i]) { streak += dt; longest = Math.max(longest, streak); }
-      else streak = 0;
-      lastT = points[i].t;
-    }
-    return {
-      id:`${live.startedAt}-${Math.random().toString(36).slice(2,7)}`,
-      createdAt:live.startedAt,
-      durationMs:Math.max(voicedMs, Date.now() - live.startedAt),
-      voicedMs:Math.round(voicedMs),
-      targetMidi:target,
-      accuracy:Math.round(accuracy * 10) / 10,
-      avgAbsCents:Math.round(avgAbs * 10) / 10,
-      biasCents:Math.round(bias * 10) / 10,
-      medianCents:Math.round((median(deviations) || 0) * 10) / 10,
-      longestInTuneMs:Math.round(longest),
-      minMidi:Math.min(...midis),
-      maxMidi:Math.max(...midis),
-      sampleCount:points.length,
-      technique:analyzeAllUtterances(points, target),
-      points:compressPoints(points)
-    };
-  }
-  function refreshRecentPreview() {
-    const list = document.getElementById('recentHistoryList');
-    const summary = document.getElementById('historySummary');
-    const empty = document.getElementById('historyEmpty');
-    if (!list || !summary || !empty) return;
-    const sessions = readSessions();
-    list.innerHTML = '';
-    empty.classList.toggle('hidden', sessions.length > 0);
-    if (!sessions.length) {
-      summary.innerHTML = '<strong>아직 기록 없음</strong><span>짧은 발성도 자동 저장됩니다.</span>';
-      return;
-    }
-    summary.innerHTML = `<strong>최근 기록 ${Math.min(5,sessions.length)}회</strong><span>짧은 발성 포함 · 전체 ${sessions.length}개</span>`;
-    sessions.slice(0,3).forEach((s, idx) => {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'history-row';
-      const target = Number.isFinite(s.targetMidi) ? noteInfo(s.targetMidi) : null;
-      const title = target ? `${target.name} · ${target.korean}` : '자유 측정';
-      const tech = s.technique;
-      const detail = tech?.utteranceCount ? `발성 ${tech.utteranceCount}회 · ${Math.round(s.voicedMs || 0)}ms 유효` : `${Math.round(s.avgAbsCents || 0)}c 평균 오차`;
-      const score = Number.isFinite(s.targetMidi) ? `${Math.round(s.accuracy || 0)}% 정확` : `${noteInfo(s.minMidi).name}–${noteInfo(s.maxMidi).name}`;
-      row.innerHTML = `<span class="history-row-main"><strong>${title}</strong><small>${new Date(s.createdAt).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',hour12:false})} · ${detail}</small></span><span class="history-row-score"><strong>${score}</strong><small>탭하여 상세 보기</small></span><span class="history-chevron">›</span>`;
-      row.addEventListener('click', () => {
-        const allBtn = document.getElementById('historyAllBtn');
-        allBtn?.click();
-        requestAnimationFrame(() => {
-          const rows = document.querySelectorAll('#allHistoryList .all-history-row');
-          rows[idx]?.click();
-        });
-      });
-      list.appendChild(row);
-    });
-  }
-
-  function beginPatchSession() {
-    patchLive = {
-      startedAt:Date.now(),
-      startedPerf:performance.now(),
-      targetMidi:Number.isFinite(state.targetMidi) ? state.targetMidi : null,
-      points:[],
-      lastCapturePerf:0
-    };
-  }
-  function capturePatchPoint(result) {
-    if (!patchLive || !state.measuring || !state.lastGood) return;
-    const now = performance.now();
-    const db = Number(result?.db), conf = Number(result?.confidence), freq = Number(result?.frequency);
-    if (!Number.isFinite(freq) || conf < 0.58 || !Number.isFinite(db) || db < state.gateDb || now - state.lastGood.now > 180) return;
-    if (now - patchLive.lastCapturePerf < CAPTURE_INTERVAL_MS) return;
-    patchLive.lastCapturePerf = now;
-    patchLive.points.push({ t:Math.round(now - patchLive.startedPerf), m:Math.round(state.lastGood.midi * 1000) / 1000 });
-  }
-  function enhanceNewestRecord(beforeCount) {
-    const sessions = readSessions();
-    if (!patchLive?.points?.length) return false;
-    if (sessions.length > beforeCount) {
-      const newest = sessions[0];
-      if (newest && Math.abs(Number(newest.createdAt) - patchLive.startedAt) < 5000) {
-        newest.technique = analyzeAllUtterances(newest.points || patchLive.points, newest.targetMidi);
-        newest.voicedMs = Math.max(Number(newest.voicedMs) || 0, estimateVoicedMs(newest.points || patchLive.points));
-        writeSessions(sessions);
-        return true;
-      }
-    }
-    const record = buildCompatibleRecord(patchLive);
-    if (!record) return false;
-    sessions.unshift(record);
-    writeSessions(sessions);
-    const toast = document.getElementById('saveToast');
-    if (toast) {
-      toast.textContent = '짧은 발성도 연습 기록에 저장했습니다';
-      toast.classList.add('show');
-      setTimeout(()=>toast.classList.remove('show'), 2300);
-    }
-    return true;
-  }
-
-  async function requestWakeLock() {
-    if (!state.measuring || document.hidden || !navigator.wakeLock?.request) return;
-    try {
-      if (!wakeLock || wakeLock.released) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener?.('release', () => { wakeLock = null; }, { once:true });
-      }
-    } catch (error) {
-      console.debug('wake lock unavailable', error);
-    }
-  }
-  async function releaseWakeLock() {
-    try { await wakeLock?.release?.(); } catch (_) {}
-    wakeLock = null;
-  }
-  async function recoverCaptureAfterForeground() {
-    if (!state.measuring) return;
-    await requestWakeLock();
-    const track = state.stream?.getAudioTracks?.()[0];
-    if (!track || track.readyState !== 'live') {
-      try { stopMeasurement(); } catch (_) {}
-      if (typeof showError === 'function') showError('iOS가 백그라운드에서 마이크 입력을 종료했습니다. 현재 PWA에서는 지속적인 백그라운드 녹음을 보장할 수 없어, 다시 측정을 시작해 주세요.');
-      return;
-    }
-    try {
-      if (state.audioContext?.state === 'suspended') await state.audioContext.resume();
-      if (typeof setStatus === 'function') setStatus('실시간 측정 중', 'live');
-    } catch (error) {
-      console.warn('capture resume', error);
-    }
-  }
-
-  document.addEventListener('visibilitychange', (event) => {
-    if (!state?.measuring) return;
-    event.stopImmediatePropagation();
-    if (document.hidden) {
-      wentHiddenAt = Date.now();
-      return;
-    }
-    recoverCaptureAfterForeground();
-    wentHiddenAt = null;
-  }, true);
-
-  const originalStart = startMeasurement;
-  const originalStop = stopMeasurement;
-  const originalResult = onPitchResult;
-  const originalReset = resetSession;
-  const originalSetTarget = setTarget;
-
-  startMeasurement = async function(...args) {
-    const was = state.measuring;
-    const result = await originalStart.apply(this, args);
-    if (!was && state.measuring) {
-      beginPatchSession();
-      requestWakeLock();
-    }
-    return result;
-  };
-  onPitchResult = function(result) {
-    const value = originalResult.call(this, result);
-    capturePatchPoint(result);
-    return value;
-  };
-  stopMeasurement = function(...args) {
-    const before = readSessions().length;
-    const hadPatch = !!patchLive?.points?.length;
-    const value = originalStop.apply(this, args);
-    if (hadPatch) {
-      enhanceNewestRecord(before);
-      refreshRecentPreview();
-    }
-    patchLive = null;
-    releaseWakeLock();
-    return value;
-  };
-  resetSession = function(...args) {
-    const value = originalReset.apply(this, args);
-    if (state.measuring) beginPatchSession();
-    else patchLive = null;
-    return value;
-  };
-  setTarget = function(midi) {
-    const changed = state.targetMidi !== midi;
-    const value = originalSetTarget.call(this, midi);
-    if (changed && state.measuring) beginPatchSession();
-    return value;
-  };
-
-  window.VocalScopeCaptureCapabilities = {
-    get currentStream() { return state.stream || null; },
-    get isMeasuring() { return !!state.measuring; },
-    get wasBackgroundedAt() { return wentHiddenAt; },
-    screenWakeLock: !!navigator.wakeLock?.request,
-    mediaRecorder: typeof MediaRecorder !== 'undefined',
-    trueBackgroundRecordingInIOSPWA: false,
-    requestWakeLock,
-    recoverCaptureAfterForeground
-  };
+  function standalone(){return window.matchMedia?.('(display-mode: standalone)')?.matches||navigator.standalone===true;}
+  function capabilities(){const d=window.VocalScope?.getDiagnostics?.()||{};let sessions=[];try{sessions=JSON.parse(localStorage.getItem('vocalScopePracticeHistoryV1')||'[]');if(!Array.isArray(sessions))sessions=[];}catch(_){sessions=[];}return{...d,secureContext:window.isSecureContext,standalone:standalone(),getUserMedia:!!navigator.mediaDevices?.getUserMedia,audioContext:!!(window.AudioContext||window.webkitAudioContext),worker:typeof Worker!=='undefined',serviceWorker:!!navigator.serviceWorker,serviceWorkerControlled:!!navigator.serviceWorker?.controller,wakeLock:!!navigator.wakeLock?.request,mediaRecorder:typeof MediaRecorder!=='undefined',sessionCount:sessions.length,lastSession:sessions[0]?{createdAt:sessions[0].createdAt,sampleCount:sessions[0].sampleCount,voicedMs:sessions[0].voicedMs,analysisVersion:sessions[0].analysisVersion||sessions[0].technique?.analysisVersion}:null,selfTest};}
+  function render(){const host=document.getElementById('diagnosticPanel');if(!host)return;runSelfTest();const c=capabilities();const ok=selfTest.ok;host.innerHTML=`<div class="diag-head"><div><span class="section-kicker">SYSTEM CHECK</span><strong>버전 ${c.version||'—'} · ${c.build||'—'}</strong></div><span class="diag-status ${ok?'good':'bad'}">${ok?'자체 테스트 통과':'점검 필요'}</span></div><div class="diag-grid"><span>마이크 API <b>${c.getUserMedia?'✓':'×'}</b></span><span>AudioContext <b>${c.audioContext?'✓':'×'}</b></span><span>Worker <b>${c.worker?'✓':'×'}</b></span><span>PWA <b>${c.standalone?'✓':'Safari'}</b></span><span>SW 제어 <b>${c.serviceWorkerControlled?'✓':'대기'}</b></span><span>기록 <b>${c.sessionCount}개</b></span></div><p class="diag-note">자체 테스트는 저장·발성 분리·간격 계산 로직을 점검합니다. 실제 마이크 정확도는 별도입니다.</p><div class="diag-actions"><button id="copyDiagBtn" type="button" class="secondary-btn">진단 정보 복사</button><button id="refreshAppBtn" type="button" class="secondary-btn">최신 버전 다시 불러오기</button></div>`;document.getElementById('copyDiagBtn').onclick=copyReport;document.getElementById('refreshAppBtn').onclick=hardRefresh;}
+  async function copyReport(){const text=JSON.stringify(capabilities(),null,2);try{await navigator.clipboard.writeText(text);const b=document.getElementById('copyDiagBtn');if(b){const old=b.textContent;b.textContent='복사됨';setTimeout(()=>b.textContent=old,1500);}}catch(_){window.prompt('아래 내용을 복사해 주세요.',text);}}
+  async function hardRefresh(){const b=document.getElementById('refreshAppBtn');if(b){b.disabled=true;b.textContent='업데이트 확인 중…';}try{if('caches'in window){for(const k of await caches.keys())await caches.delete(k);}const reg=await navigator.serviceWorker?.getRegistration?.();await reg?.update?.();}catch(e){console.warn('refresh',e);}location.reload();}
+  function mount(){if(document.getElementById('diagnosticPanel'))return;const sheet=document.querySelector('#helpDialog .help-sheet');if(!sheet)return;const host=document.createElement('div');host.id='diagnosticPanel';host.className='diagnostic-panel';sheet.insertBefore(host,sheet.lastElementChild);const style=document.createElement('style');style.textContent=`.diagnostic-panel{margin-top:12px;border:1px solid var(--line);border-radius:16px;padding:12px;background:rgba(255,255,255,.02)}.diag-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.diag-head strong{display:block;margin-top:3px;font-size:12px}.diag-status{font-size:9px;padding:5px 7px;border-radius:999px;border:1px solid var(--line)}.diag-status.good{color:var(--good);border-color:rgba(95,224,174,.25)}.diag-status.bad{color:#ff9dac;border-color:rgba(255,125,142,.25)}.diag-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:10px}.diag-grid span{font-size:10px;color:var(--muted);background:rgba(255,255,255,.025);border-radius:9px;padding:7px}.diag-grid b{float:right;color:#dbe6fb}.diag-note{font-size:9px;color:var(--muted);line-height:1.5;margin:9px 0}.diag-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.diag-actions .secondary-btn{min-height:42px;font-size:11px}`;document.head.appendChild(style);render();}
+  document.addEventListener('DOMContentLoaded',mount);
+  window.addEventListener('vs:ready',()=>setTimeout(render,0));
+  window.VocalDiagnostics={runSelfTest,capabilities,render};
 })();
