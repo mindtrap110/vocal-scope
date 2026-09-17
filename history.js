@@ -1,417 +1,64 @@
 'use strict';
 
 (() => {
-  const STORAGE_KEY = 'vocalScopePracticeHistoryV1';
-  const MAX_SESSIONS = 30;
-  const MAX_GRAPH_POINTS = 900;
-  const CAPTURE_INTERVAL_MS = 90;
-  const PHRASE_GAP_MS = 360;
-  const LANDING_START_MS = 200;
-  const LANDING_END_MS = 500;
-  const SUSTAIN_START_MS = 500;
-  const SUSTAIN_END_MS = 1500;
-  const DRIFT_START_MS = 200;
-  const DRIFT_MAX_END_MS = 4000;
-  const MIN_PHRASE_MS = 650;
-  const ANALYSIS_VERSION = 2;
-  let live = null;
-  let selectedSessionId = null;
+  const STORAGE_KEY='vocalScopePracticeHistoryV1';
+  const DRAFT_KEY='vocalScopePracticeDraftV3';
+  const MAX_SESSIONS=80;
+  const CAPTURE_INTERVAL_MS=80;
+  const PHRASE_GAP_MS=360;
+  let live=null;
+  let selectedSessionId=null;
+  let draftTimer=null;
 
-  function nowDateLabel(ts) {
-    const d = new Date(ts), today = new Date();
-    const date = d.toDateString() === today.toDateString() ? '오늘' : `${d.getMonth()+1}/${d.getDate()}`;
-    const time = d.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', hour12:false });
-    return `${date} ${time}`;
-  }
-  function fullDateLabel(ts) {
-    return new Date(ts).toLocaleString('ko-KR', { year:'numeric', month:'long', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit', hour12:false });
-  }
-  function readSessions() {
-    try { const p = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); return Array.isArray(p) ? p : []; }
-    catch (_) { return []; }
-  }
-  function writeSessions(items) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, MAX_SESSIONS))); return true; }
-    catch (e) { console.warn('practice history storage', e); return false; }
-  }
-  function avg(v) { const nums=v.filter(Number.isFinite); return nums.length ? nums.reduce((a,b)=>a+b,0)/nums.length : 0; }
-  function medianValue(v) {
-    const nums = v.filter(Number.isFinite);
-    if (!nums.length) return null;
-    const a=[...nums].sort((x,y)=>x-y), m=Math.floor(a.length/2);
-    return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
-  }
-  function formatDuration(ms) {
-    if (!Number.isFinite(ms)) return '0초';
-    if (ms < 60000) return `${(ms/1000).toFixed(ms < 10000 ? 1 : 0)}초`;
-    return `${Math.floor(ms/60000)}분 ${Math.round((ms%60000)/1000)}초`;
-  }
-  function signedCent(v) {
-    if (!Number.isFinite(v)) return '—';
-    const n=Math.round(v); return `${n>0?'+':''}${n} cent`;
-  }
-  function signedCentShort(v) {
-    if (!Number.isFinite(v)) return '—';
-    const n=Math.round(v); return `${n>0?'+':''}${n}c`;
-  }
-  function signedDrift(v) {
-    if (!Number.isFinite(v)) return '—';
-    const n=Math.round(v); return `${n>0?'+':''}${n} cent/s`;
-  }
-  function signedDriftShort(v) {
-    if (!Number.isFinite(v)) return '—';
-    const n=Math.round(v); return `${n>0?'+':''}${n}c/s`;
-  }
-  function describeTarget(s) {
-    if (Number.isFinite(s.targetMidi)) { const n=noteFromMidi(s.targetMidi); return `${n.name} · ${n.korean}`; }
-    return '자유 측정';
-  }
-  function freeDeviation(m) { return (m-Math.round(m))*100; }
+  const P=()=>window.VocalPracticeCore;
+  const V=()=>window.VocalScope;
+  function note(m){return V()?.noteFromMidi?.(m)||{name:'—',korean:'—'};}
+  function readSessions(){try{const p=JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');return Array.isArray(p)?p:[];}catch(_){return[];}}
+  function writeSessions(items){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(items.slice(0,MAX_SESSIONS)));return true;}catch(e){console.warn('history storage',e);return false;}}
+  function signed(v,suffix=' cent'){if(!Number.isFinite(v))return'—';const n=Math.round(v);return`${n>0?'+':''}${n}${suffix}`;}
+  function signedShort(v,suffix='c'){if(!Number.isFinite(v))return'—';const n=Math.round(v);return`${n>0?'+':''}${n}${suffix}`;}
+  function duration(ms){if(!Number.isFinite(ms))return'0초';if(ms<1000)return`${Math.max(0,Math.round(ms))}ms`;if(ms<60000)return`${(ms/1000).toFixed(ms<10000?1:0)}초`;return`${Math.floor(ms/60000)}분 ${Math.round((ms%60000)/1000)}초`;}
+  function dateLabel(ts){const d=new Date(ts),today=new Date();const date=d.toDateString()===today.toDateString()?'오늘':`${d.getMonth()+1}/${d.getDate()}`;return`${date} ${d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',hour12:false})}`;}
+  function fullDate(ts){return new Date(ts).toLocaleString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false});}
+  function describe(s){if(s?.plan?.type==='interval'){const a=note(s.plan.pattern?.[0]),b=note(s.plan.pattern?.[1]);return`${a.name} ↔ ${b.name}`;}if(Number.isFinite(s?.targetMidi)){const n=note(s.targetMidi);return`${n.name} · ${n.korean}`;}return'자유 측정';}
+  function getTechnique(s){if(s?.technique?.analysisVersion===3&&Array.isArray(s.technique.utterances))return s.technique;return P().analyzeTechnique(s?.points||[],{targetMidi:s?.targetMidi,plan:s?.plan,gapMs:PHRASE_GAP_MS,captureIntervalMs:CAPTURE_INTERVAL_MS});}
+  function getIntervals(s,tech=getTechnique(s)){return P().analyzeIntervals(tech,s?.plan||null);}
+  function intervalScore(s){const ints=getIntervals(s);if(!ints.length)return null;return P().median(ints.map(x=>Math.abs(x.errorCents)));}
 
-  function beginSession() {
-    live={startedAt:Date.now(), startedPerf:performance.now(), targetMidi:state.targetMidi, points:[], lastCapturePerf:0, lastReliablePerf:null, voicedMs:0};
-    updateRecordingPill();
-  }
-  function captureReliablePitch(result) {
-    if (!live || !state.measuring || !state.lastGood) return;
-    const perf=performance.now(), db=Number(result?.db), conf=Number(result?.confidence), freq=Number(result?.frequency);
-    if (!Number.isFinite(freq) || conf<0.58 || !Number.isFinite(db) || db<state.gateDb || perf-state.lastGood.now>180) return;
-    if (perf-live.lastCapturePerf<CAPTURE_INTERVAL_MS) return;
-    if (live.lastReliablePerf!=null) { const dt=perf-live.lastReliablePerf; if (dt<=240) live.voicedMs+=dt; }
-    live.lastReliablePerf=perf; live.lastCapturePerf=perf;
-    live.points.push({t:Math.round(perf-live.startedPerf), m:Math.round(state.lastGood.midi*1000)/1000});
-  }
-  function compressPoints(points) {
-    if (points.length<=MAX_GRAPH_POINTS) return points.map(p=>[p.t,p.m]);
-    const step=points.length/MAX_GRAPH_POINTS, out=[];
-    for(let i=0;i<MAX_GRAPH_POINTS;i++){const p=points[Math.min(points.length-1,Math.floor(i*step))];out.push([p.t,p.m]);}
-    return out;
-  }
-  function normalizePoints(points) {
-    if (!Array.isArray(points)) return [];
-    return points.map(p => Array.isArray(p) ? {t:Number(p[0]),m:Number(p[1])} : {t:Number(p.t),m:Number(p.m)})
-      .filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.m)).sort((a,b)=>a.t-b.t);
-  }
-  function segmentPhrases(points) {
-    const p=normalizePoints(points), out=[];
-    let current=[];
-    for(const point of p){
-      if(current.length && point.t-current[current.length-1].t>PHRASE_GAP_MS){out.push(current);current=[];}
-      current.push(point);
-    }
-    if(current.length)out.push(current);
-    return out;
-  }
-  function splitPhrases(points) {
-    return segmentPhrases(points).filter(seg=>seg.length>=5 && seg[seg.length-1].t-seg[0].t>=MIN_PHRASE_MS);
-  }
-  function centForMidi(midi,referenceMidi){return (midi-referenceMidi)*100;}
-  function medianInWindow(segment,referenceMidi,startMs,endMs){
-    const t0=segment[0].t;
-    return medianValue(segment.filter(p=>p.t-t0>=startMs&&p.t-t0<=endMs).map(p=>centForMidi(p.m,referenceMidi)));
-  }
-  function robustSlope(segment,referenceMidi){
-    const t0=segment[0].t, endRel=Math.min(DRIFT_MAX_END_MS,segment[segment.length-1].t-t0);
-    const pts=segment.filter(p=>p.t-t0>=DRIFT_START_MS&&p.t-t0<=endRel).map(p=>({x:(p.t-t0)/1000,y:centForMidi(p.m,referenceMidi)}));
-    if(pts.length<5 || pts[pts.length-1].x-pts[0].x<0.6)return null;
-    const slopes=[];
-    for(let i=0;i<pts.length-1;i++){
-      for(let j=i+1;j<pts.length;j++){
-        const dx=pts[j].x-pts[i].x;
-        if(dx>=0.25)slopes.push((pts[j].y-pts[i].y)/dx);
-      }
-    }
-    return medianValue(slopes);
-  }
-  function analyzeTechnique(points,targetMidi){
-    const phrases=splitPhrases(points), utterances=[];
-    phrases.forEach((seg,index)=>{
-      const t0=seg[0].t, durationMs=seg[seg.length-1].t-t0;
-      const medianMidi=medianValue(seg.map(p=>p.m));
-      if(!Number.isFinite(medianMidi))return;
-      const centerMidi=Math.round(medianMidi);
-      const referenceMidi=Number.isFinite(targetMidi)?targetMidi:centerMidi;
-      const landing=medianInWindow(seg,referenceMidi,LANDING_START_MS,LANDING_END_MS);
-      const sustain=durationMs>=1200?medianInWindow(seg,referenceMidi,SUSTAIN_START_MS,SUSTAIN_END_MS):null;
-      const drift=robustSlope(seg,referenceMidi);
-      const centerNote=noteFromMidi(centerMidi);
-      utterances.push({
-        index:index+1,startMs:t0,endMs:seg[seg.length-1].t,durationMs:Math.round(durationMs),
-        medianMidi:Math.round(medianMidi*1000)/1000,centerMidi,
-        noteName:centerNote.name,noteKorean:centerNote.korean,
-        centerOffsetCents:Math.round((medianMidi-centerMidi)*1000)/10,
-        landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,
-        sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,
-        driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null
-      });
-    });
-    if(!utterances.length)return null;
-    const landing=medianValue(utterances.map(x=>x.landingCents));
-    const sustain=medianValue(utterances.map(x=>x.sustainCents));
-    const drift=medianValue(utterances.map(x=>x.driftCentsPerSec));
-    return {
-      analysisVersion:ANALYSIS_VERSION,
-      referenceMode:Number.isFinite(targetMidi)?'target':'nearest-note',
-      landingCents:Number.isFinite(landing)?Math.round(landing*10)/10:null,
-      sustainCents:Number.isFinite(sustain)?Math.round(sustain*10)/10:null,
-      driftCentsPerSec:Number.isFinite(drift)?Math.round(drift*10)/10:null,
-      utteranceCount:utterances.length,
-      utterances:utterances.slice(0,20)
-    };
-  }
-  function getTechnique(s){
-    if(s?.technique?.analysisVersion===ANALYSIS_VERSION && Array.isArray(s.technique.utterances))return s.technique;
-    return analyzeTechnique(s?.points || [], s?.targetMidi);
-  }
-  function analyzeIntervals(tech){
-    const u=tech?.utterances || [];
-    const transitions=[];
-    for(let i=0;i<u.length-1;i++){
-      const a=u[i],b=u[i+1];
-      if(!Number.isFinite(a.medianMidi)||!Number.isFinite(b.medianMidi)||!Number.isFinite(a.centerMidi)||!Number.isFinite(b.centerMidi))continue;
-      const actual=(b.medianMidi-a.medianMidi)*100;
-      const target=(b.centerMidi-a.centerMidi)*100;
-      transitions.push({
-        index:i+1,
-        fromIndex:a.index,toIndex:b.index,
-        fromNote:a.noteName,toNote:b.noteName,
-        fromOffset:a.centerOffsetCents,toOffset:b.centerOffsetCents,
-        actualCents:Math.round(actual*10)/10,
-        targetCents:Math.round(target*10)/10,
-        errorCents:Math.round((actual-target)*10)/10
-      });
-    }
-    return transitions;
-  }
+  function beginSession(detail={}){const plan=window.VocalTrainer?.getPlanSnapshot?.()||null;live={id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,startedAt:detail.startedAt||Date.now(),startedPerf:Number.isFinite(detail.startedPerf)?detail.startedPerf:performance.now(),targetMidi:plan?null:(Number.isFinite(detail.targetMidi)?detail.targetMidi:V()?.state?.targetMidi??null),plan,points:[],lastCapturePerf:-Infinity,updatedAt:Date.now()};saveDraft();updatePill();}
+  function capture(detail){if(!live||!Number.isFinite(detail?.midi))return;const now=Number.isFinite(detail.now)?detail.now:performance.now();if(now-live.lastCapturePerf<CAPTURE_INTERVAL_MS)return;live.lastCapturePerf=now;live.points.push({t:Math.max(0,Math.round(now-live.startedPerf)),m:Math.round(detail.midi*1000)/1000});live.updatedAt=Date.now();if(live.points.length===1)updatePill('짧은 발성도 저장 중');}
+  function buildRecord(src,{recovered=false}={}){const points=P().normalizePoints(src?.points||[]);if(!points.length)return null;const metrics=P().sessionMetrics(points,src.targetMidi);if(!metrics)return null;const tech=P().analyzeTechnique(points,{targetMidi:src.targetMidi,plan:src.plan,gapMs:PHRASE_GAP_MS,captureIntervalMs:CAPTURE_INTERVAL_MS});return{id:src.id||`${src.startedAt}-${Math.random().toString(36).slice(2,7)}`,createdAt:src.startedAt||Date.now(),durationMs:Math.max(metrics.voicedMs,Date.now()-(src.startedAt||Date.now())),voicedMs:metrics.voicedMs,targetMidi:Number.isFinite(src.targetMidi)?src.targetMidi:null,plan:src.plan||null,accuracy:metrics.accuracy,avgAbsCents:metrics.avgAbsCents,biasCents:metrics.biasCents,medianCents:metrics.medianCents,longestInTuneMs:metrics.longestInTuneMs,minMidi:metrics.minMidi,maxMidi:metrics.maxMidi,sampleCount:metrics.sampleCount,technique:tech,points:points.map(p=>[p.t,p.m]),recovered:!!recovered,analysisVersion:3};}
+  function saveLive({silent=false}={}){if(!live)return null;const record=buildRecord(live);live=null;clearDraft();updatePill();if(!record)return null;const sessions=readSessions().filter(s=>s.id!==record.id);sessions.unshift(record);writeSessions(sessions);renderHistory();if(!silent)toast(record.sampleCount<=4?'짧은 발성도 저장했습니다':'연습 기록을 저장했습니다');return record;}
+  function discardLive(){live=null;clearDraft();updatePill();}
+  function saveDraft(){if(!live?.points?.length)return;try{localStorage.setItem(DRAFT_KEY,JSON.stringify({...live,updatedAt:Date.now()}));}catch(_){} }
+  function clearDraft(){try{localStorage.removeItem(DRAFT_KEY);}catch(_){} }
+  function recoverDraft(){try{const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');if(!d?.points?.length)return;const age=Date.now()-Number(d.updatedAt||d.startedAt||0);if(age<0||age>12*60*60*1000){clearDraft();return;}const sessions=readSessions();if(sessions.some(s=>s.id===d.id)){clearDraft();return;}const r=buildRecord(d,{recovered:true});if(r){sessions.unshift(r);writeSessions(sessions);clearDraft();toast('중단된 측정 기록을 복구했습니다');}}catch(_){clearDraft();}}
+  function toast(text){const t=document.getElementById('saveToast');if(!t)return;t.textContent=text;t.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.remove('show'),2200);}
+  function updatePill(custom){const el=document.getElementById('historyLiveStatus');if(!el)return;el.textContent=custom||(live?'이번 연습 기록 중':'자동 저장');el.classList.toggle('live',!!live);}
 
-  function buildSessionRecord() {
-    if (!live || live.points.length<5 || live.voicedMs<700) return null;
-    const target=live.targetMidi;
-    const deviations=live.points.map(p=>Number.isFinite(target)?(p.m-target)*100:freeDeviation(p.m));
-    const inTune=deviations.map(c=>Math.abs(c)<=TARGET_TOLERANCE_CENTS);
-    const accuracy=100*inTune.filter(Boolean).length/inTune.length, avgAbs=avg(deviations.map(Math.abs)), bias=avg(deviations);
-    let longest=0, streak=0, lastT=null;
-    for(let i=0;i<live.points.length;i++){
-      const p=live.points[i], dt=lastT==null?0:Math.min(220,Math.max(0,p.t-lastT));
-      if(inTune[i]){streak+=dt;longest=Math.max(longest,streak);}else streak=0;
-      lastT=p.t;
-    }
-    const midis=live.points.map(p=>p.m), med=medianValue(deviations);
-    return {
-      id:`${live.startedAt}-${Math.random().toString(36).slice(2,7)}`, createdAt:live.startedAt,
-      durationMs:Math.max(0,Date.now()-live.startedAt), voicedMs:Math.round(live.voicedMs),
-      targetMidi:Number.isFinite(target)?target:null, accuracy:Math.round(accuracy*10)/10,
-      avgAbsCents:Math.round(avgAbs*10)/10, biasCents:Math.round(bias*10)/10,
-      medianCents:Number.isFinite(med)?Math.round(med*10)/10:null, longestInTuneMs:Math.round(longest),
-      minMidi:Math.min(...midis), maxMidi:Math.max(...midis), sampleCount:live.points.length,
-      technique:analyzeTechnique(live.points,target), points:compressPoints(live.points)
-    };
-  }
-  function saveLiveSession() {
-    const record=buildSessionRecord(); live=null; updateRecordingPill();
-    if(!record)return;
-    const sessions=readSessions(); sessions.unshift(record); writeSessions(sessions); renderHistory(); showSavedToast(record);
-  }
-  function discardLiveSession(){live=null;updateRecordingPill();}
-  function updateRecordingPill(){
-    const el=document.getElementById('historyLiveStatus'); if(!el)return;
-    el.textContent=live&&state.measuring?'이번 연습 기록 중':'자동 저장';
-    el.classList.toggle('live',!!(live&&state.measuring));
-  }
-  function showSavedToast(record){
-    const t=document.getElementById('saveToast');if(!t)return;
-    const target=Number.isFinite(record.targetMidi)?noteFromMidi(record.targetMidi).name:'자유 측정';
-    t.textContent=`${target} 연습 기록을 저장했습니다`;t.classList.add('show');clearTimeout(showSavedToast.timer);
-    showSavedToast.timer=setTimeout(()=>t.classList.remove('show'),2300);
-  }
-  function trendForTarget(targetMidi){
-    const a=readSessions().filter(s=>s.targetMidi===targetMidi).slice(0,5);if(a.length<2)return null;
-    return a[0].accuracy-avg(a.slice(1).map(s=>s.accuracy));
-  }
-  function buildTechniqueDiagnosis(tech,targetSelected){
-    if(!tech)return '분석 가능한 길이의 발성이 부족해 착지·유지·드리프트를 계산하지 못했습니다.';
-    const l=tech.landingCents,s=tech.sustainCents,d=tech.driftCentsPerSec;
-    if(!targetSelected)return '자유 측정에서는 각 발성의 중앙값에 가장 가까운 반음을 기준으로 착지·유지·드리프트를 계산합니다.';
-    if(Number.isFinite(l)&&Math.abs(l)<=15&&Number.isFinite(s)&&s<-15&&Number.isFinite(d)&&d<-8)return '처음에는 목표음에 잘 착지했지만, 유지하면서 음정이 아래로 떨어졌습니다.';
-    if(Number.isFinite(l)&&Math.abs(l)<=15&&Number.isFinite(s)&&s>15&&Number.isFinite(d)&&d>8)return '처음에는 목표음에 잘 착지했지만, 유지하면서 음정이 위로 올라갔습니다.';
-    if(Number.isFinite(l)&&Math.abs(l)>15&&Number.isFinite(s)&&Math.abs(s)<=15)return '첫 착지는 목표음에서 벗어났지만, 0.5~1.5초 사이에 목표음을 찾아 들어갔습니다.';
-    if(Number.isFinite(l)&&Math.abs(l)>15)return `첫 착지부터 목표음보다 ${l<0?'낮게':'높게'} 시작하는 경향이 보였습니다.`;
-    if(Number.isFinite(s)&&Math.abs(s)<=15&&Number.isFinite(d)&&Math.abs(d)<=8)return '착지와 유지가 모두 목표음 근처에 있고, 시간에 따른 드리프트도 작았습니다.';
-    if(Number.isFinite(d)&&d<-8)return '발성 중 시간이 지날수록 음정이 낮아지는 경향이 보였습니다.';
-    if(Number.isFinite(d)&&d>8)return '발성 중 시간이 지날수록 음정이 높아지는 경향이 보였습니다.';
-    return '착지와 유지 구간을 따로 확인해 어느 단계에서 오차가 생겼는지 비교해 보세요.';
-  }
-  function buildCoachText(s){
-    const p=[],tech=getTechnique(s),intervals=analyzeIntervals(tech);
-    if(Number.isFinite(s.targetMidi)){
-      p.push(buildTechniqueDiagnosis(tech,true));
-      if(tech){
-        if(Number.isFinite(tech.landingCents)&&Math.abs(tech.landingCents)>15)p.push('다음 반복에서는 먼저 시작 0.5초 안에 목표음 중심에 바로 들어가는 데 집중하세요.');
-        else if(Number.isFinite(tech.sustainCents)&&Math.abs(tech.sustainCents)>15)p.push('첫 음은 그대로 두고, 그 뒤 1초 동안 같은 높이를 유지하는 데 집중하세요.');
-        if(Number.isFinite(tech.driftCentsPerSec)&&Math.abs(tech.driftCentsPerSec)>12)p.push(`드리프트는 ${signedDrift(tech.driftCentsPerSec)}입니다. 처음 맞춘 높이를 기준으로 2~3초 동안 선을 수평으로 만드는 연습이 좋습니다.`);
-      }
-      const trend=trendForTarget(s.targetMidi);
-      if(trend!=null&&Math.abs(trend)>=4)p.push(trend>0?`최근 같은 목표음 기록보다 ±15 cent 정확률이 약 ${Math.round(trend)}%p 좋아졌습니다.`:`최근 같은 목표음 평균보다 ±15 cent 정확률이 약 ${Math.abs(Math.round(trend))}%p 낮았습니다.`);
-    } else {
-      p.push(buildTechniqueDiagnosis(tech,false));
-      if(intervals.length){
-        const worst=intervals.reduce((a,b)=>Math.abs(b.errorCents)>Math.abs(a.errorCents)?b:a,intervals[0]);
-        p.push(`발성 간 이동도 계산했습니다. 가장 큰 간격 오차는 ${worst.fromNote}→${worst.toNote}에서 ${signedCent(worst.errorCents)}였습니다.`);
-      } else p.push('두 번 이상 분리해서 발성하면 발성 간 실제 이동량과 목표 간격의 차이도 계산됩니다.');
-    }
-    return p.join(' ');
-  }
+  function recentSummary(sessions){const recent=sessions.slice(0,5);const target=recent.filter(s=>Number.isFinite(s.targetMidi)).map(s=>getTechnique(s)).filter(Boolean);const interval=recent.filter(s=>s.plan?.type==='interval').map(s=>intervalScore(s)).filter(Number.isFinite);if(interval.length)return`<strong>최근 간격 오차 ${Math.round(P().median(interval))}c</strong><span>최근 ${recent.length}회 · 기록 ${sessions.length}개</span>`;if(target.length){const la=P().median(target.map(t=>Math.abs(t.landingCents)).filter(Number.isFinite)),su=P().median(target.map(t=>Math.abs(t.sustainCents)).filter(Number.isFinite)),dr=P().median(target.map(t=>t.driftCentsPerSec).filter(Number.isFinite));return`<strong>최근 착지 ${Number.isFinite(la)?Math.round(la)+'c':'—'} · 유지 ${Number.isFinite(su)?Math.round(su)+'c':'—'}</strong><span>드리프트 ${Number.isFinite(dr)?signedShort(dr,'c/s'):'—'} · 기록 ${sessions.length}개</span>`;}return`<strong>최근 기록 ${recent.length}회</strong><span>짧은 발성 포함 · 전체 ${sessions.length}개</span>`;}
+  function renderHistory(){const list=document.getElementById('recentHistoryList'),empty=document.getElementById('historyEmpty'),summary=document.getElementById('historySummary');if(!list||!empty||!summary)return;const sessions=readSessions();list.innerHTML='';empty.classList.toggle('hidden',sessions.length>0);if(!sessions.length){summary.innerHTML='<strong>아직 기록 없음</strong><span>신뢰 가능한 음정이 한 번이라도 잡히면 저장됩니다.</span>';return;}summary.innerHTML=recentSummary(sessions);sessions.slice(0,3).forEach(s=>{const tech=getTechnique(s),ints=getIntervals(s,tech),row=document.createElement('button');row.type='button';row.className='history-row';let score,detail;if(s.plan?.type==='interval'){const sc=intervalScore(s);score=Number.isFinite(sc)?`간격 ${Math.round(sc)}c`:'간격 분석';detail=`발성 ${tech?.utteranceCount||0}회 · 이동 ${ints.length}개`;}else if(Number.isFinite(s.targetMidi)){score=`${Math.round(s.accuracy||0)}% 정확`;detail=`착지 ${signedShort(tech?.landingCents)} · 유지 ${signedShort(tech?.sustainCents)}`;}else{score=`${note(s.minMidi).name}–${note(s.maxMidi).name}`;detail=`발성 ${tech?.utteranceCount||0}회 · ${duration(s.voicedMs)} 유효`;}row.innerHTML=`<span class="history-row-main"><strong>${describe(s)}</strong><small>${dateLabel(s.createdAt)}${s.recovered?' · 복구됨':''}</small></span><span class="history-row-score"><strong>${score}</strong><small>${detail}</small></span><span class="history-chevron">›</span>`;row.addEventListener('click',()=>openSession(s.id));list.appendChild(row);});}
+  function renderAll(){const host=document.getElementById('allHistoryList');if(!host)return;const sessions=readSessions();host.innerHTML='';if(!sessions.length){host.innerHTML='<p class="history-empty">저장된 연습 기록이 없습니다.</p>';return;}sessions.forEach(s=>{const b=document.createElement('button');b.type='button';b.className='all-history-row';const tech=getTechnique(s),sc=intervalScore(s);const metric=s.plan?.type==='interval'?(Number.isFinite(sc)?`간격 오차 ${Math.round(sc)}c`:'간격 분석'):(Number.isFinite(s.targetMidi)?`${Math.round(s.accuracy||0)}% 정확`:`${duration(s.voicedMs)} 유효`);b.innerHTML=`<span><strong>${describe(s)}</strong><small>${fullDate(s.createdAt)}</small></span><span><strong>${metric}</strong><small>발성 ${tech?.utteranceCount||0}회 · ${s.sampleCount||0}점</small></span>`;b.addEventListener('click',()=>{document.getElementById('historyDialog').close();openSession(s.id);});host.appendChild(b);});}
 
-  function renderHistory(){
-    const list=document.getElementById('recentHistoryList'), empty=document.getElementById('historyEmpty'), summary=document.getElementById('historySummary');
-    if(!list||!empty||!summary)return;
-    const sessions=readSessions();list.innerHTML='';empty.classList.toggle('hidden',sessions.length>0);
-    if(!sessions.length){summary.innerHTML='<strong>아직 기록 없음</strong><span>측정을 끝내면 자동 저장됩니다.</span>';return;}
-    const recent=sessions.slice(0,5), recentTech=recent.map(s=>({s,tech:getTechnique(s)})).filter(x=>x.tech);
-    if(recentTech.length){
-      const landingAbs=medianValue(recentTech.map(x=>x.tech.landingCents).filter(Number.isFinite).map(Math.abs));
-      const sustainAbs=medianValue(recentTech.map(x=>x.tech.sustainCents).filter(Number.isFinite).map(Math.abs));
-      const drift=medianValue(recentTech.map(x=>x.tech.driftCentsPerSec).filter(Number.isFinite));
-      summary.innerHTML=`<strong>최근 착지 ${Number.isFinite(landingAbs)?Math.round(landingAbs)+'c':'—'} · 유지 ${Number.isFinite(sustainAbs)?Math.round(sustainAbs)+'c':'—'}</strong><span>드리프트 중앙값 ${Number.isFinite(drift)?signedDriftShort(drift):'—'} · 기록 ${sessions.length}개</span>`;
-    }else{
-      const accuracyAvg=avg(recent.map(s=>s.accuracy)), best=Math.max(...recent.map(s=>s.accuracy));
-      summary.innerHTML=`<strong>최근 ${recent.length}회 평균 ${Math.round(accuracyAvg)}%</strong><span>최근 최고 ${Math.round(best)}% · 기록 ${sessions.length}개</span>`;
-    }
-    recent.slice(0,3).forEach(s=>{
-      const row=document.createElement('button');row.type='button';row.className='history-row';
-      const tech=getTechnique(s),intervals=analyzeIntervals(tech);
-      const score=Number.isFinite(s.targetMidi)?`${Math.round(s.accuracy)}% 정확`:`${noteFromMidi(s.minMidi).name}–${noteFromMidi(s.maxMidi).name}`;
-      const detail=tech?`발성 ${tech.utteranceCount}회${intervals.length?` · 간격 ${intervals.length}개`:''}`:`전체 평균 오차 ${Math.round(s.avgAbsCents)}c`;
-      row.innerHTML=`<span class="history-row-main"><strong>${describeTarget(s)}</strong><small>${nowDateLabel(s.createdAt)} · ${formatDuration(s.voicedMs)} 유효</small></span><span class="history-row-score"><strong>${score}</strong><small>${detail}</small></span><span class="history-chevron">›</span>`;
-      row.addEventListener('click',()=>openSession(s.id));list.appendChild(row);
-    });
-  }
-  function renderAllHistory(){
-    const host=document.getElementById('allHistoryList');if(!host)return;const sessions=readSessions();host.innerHTML='';
-    if(!sessions.length){host.innerHTML='<p class="history-empty">저장된 연습 기록이 없습니다.</p>';return;}
-    sessions.forEach(s=>{
-      const b=document.createElement('button');b.type='button';b.className='all-history-row';const tech=getTechnique(s),intervals=analyzeIntervals(tech);
-      const sub=tech?`발성 ${tech.utteranceCount}회 · 간격 ${intervals.length}개`:`${Math.round(s.avgAbsCents)}c 전체 평균 오차`;
-      b.innerHTML=`<span><strong>${describeTarget(s)}</strong><small>${fullDateLabel(s.createdAt)}</small></span><span><strong>${Math.round(s.accuracy)}%</strong><small>${sub}</small></span>`;
-      b.addEventListener('click',()=>{document.getElementById('historyDialog').close();openSession(s.id);});host.appendChild(b);
-    });
-  }
-  function renderUtteranceBreakdown(tech){
-    const host=document.getElementById('sessionUtteranceList'),count=document.getElementById('sessionTechniqueCount');if(!host||!count)return;
-    host.innerHTML='';
-    if(!tech?.utterances?.length){count.textContent='분석 가능한 발성 없음';host.innerHTML='<p class="utterance-empty">한 번의 발성을 약 1초 이상 유지하면 발성별 분석이 생깁니다.</p>';return;}
-    count.textContent=`발성 ${tech.utteranceCount}회 기준`;
-    tech.utterances.forEach(u=>{
-      const row=document.createElement('div');row.className='utterance-row utterance-row-v2';
-      row.innerHTML=`<span class="utterance-index">발성 ${u.index}</span><span class="utterance-note"><strong>${u.noteName}</strong><small>중앙값 ${signedCentShort(u.centerOffsetCents)}</small></span><span><small>초기 착지</small><strong>${signedCentShort(u.landingCents)}</strong></span><span><small>유지 중앙값</small><strong>${signedCentShort(u.sustainCents)}</strong></span><span><small>드리프트</small><strong>${signedDriftShort(u.driftCentsPerSec)}</strong></span>`;
-      host.appendChild(row);
-    });
-  }
-  function ensureIntervalPanel(){
-    if(document.getElementById('sessionIntervalPanel'))return;
-    const utterancePanel=document.querySelector('#sessionDialog .utterance-panel');
-    if(!utterancePanel)return;
-    const panel=document.createElement('div');panel.id='sessionIntervalPanel';panel.className='interval-panel';
-    panel.innerHTML='<div class="interval-panel-title"><span>발성 간 간격 분석</span><small>각 발성 전체 중앙값 기준</small></div><div id="sessionIntervalList" class="interval-list"></div>';
-    utterancePanel.insertAdjacentElement('afterend',panel);
-  }
-  function renderIntervalBreakdown(tech){
-    ensureIntervalPanel();
-    const panel=document.getElementById('sessionIntervalPanel'),host=document.getElementById('sessionIntervalList');if(!panel||!host)return;
-    const transitions=analyzeIntervals(tech);host.innerHTML='';
-    if(!tech?.utterances?.length || tech.utterances.length<2){
-      host.innerHTML='<p class="interval-empty">발성을 두 번 이상 나누어 내면 발성 간 이동량이 표시됩니다.</p>';return;
-    }
-    transitions.forEach(tr=>{
-      const row=document.createElement('div');row.className='interval-row';
-      row.innerHTML=`<div class="interval-route"><strong>${tr.fromNote} ${signedCentShort(tr.fromOffset)} → ${tr.toNote} ${signedCentShort(tr.toOffset)}</strong><small>발성 ${tr.fromIndex} → ${tr.toIndex}</small></div><div class="interval-metrics"><span><small>실제 이동량</small><strong>${signedCent(tr.actualCents)}</strong></span><span><small>목표 이동량</small><strong>${signedCent(tr.targetCents)}</strong></span><span class="interval-error"><small>간격 오차</small><strong>${signedCent(tr.errorCents)}</strong></span></div>`;
-      host.appendChild(row);
-    });
-  }
-  function openSession(id){
-    const s=readSessions().find(x=>x.id===id);if(!s)return;selectedSessionId=id;
-    const tech=getTechnique(s);
-    document.getElementById('sessionTitle').textContent=describeTarget(s);document.getElementById('sessionDate').textContent=fullDateLabel(s.createdAt);
-    document.getElementById('sessionLanding').textContent=tech?signedCent(tech.landingCents):'—';
-    document.getElementById('sessionSustain').textContent=tech?signedCent(tech.sustainCents):'—';
-    document.getElementById('sessionDrift').textContent=tech?signedDrift(tech.driftCentsPerSec):'—';
-    document.getElementById('sessionTechniqueHint').textContent=buildTechniqueDiagnosis(tech,Number.isFinite(s.targetMidi));
-    document.getElementById('sessionAccuracy').textContent=`${Math.round(s.accuracy)}%`;document.getElementById('sessionError').textContent=`${Math.round(s.avgAbsCents)} cent`;
-    document.getElementById('sessionBias').textContent=signedCent(s.biasCents);document.getElementById('sessionLongest').textContent=formatDuration(s.longestInTuneMs);
-    document.getElementById('sessionVoiced').textContent=formatDuration(s.voicedMs);document.getElementById('sessionRange').textContent=`${noteFromMidi(s.minMidi).name} – ${noteFromMidi(s.maxMidi).name}`;
-    document.getElementById('sessionCoach').textContent=buildCoachText(s);renderUtteranceBreakdown(tech);renderIntervalBreakdown(tech);
-    const retry=document.getElementById('retryTargetBtn');retry.classList.toggle('hidden',!Number.isFinite(s.targetMidi));
-    retry.onclick=()=>{setTarget(s.targetMidi);document.getElementById('sessionDialog').close();window.scrollTo({top:0,behavior:'smooth'});};
-    document.getElementById('deleteSessionBtn').onclick=()=>deleteSession(id);
-    document.getElementById('sessionDialog').showModal();requestAnimationFrame(()=>drawSessionGraph(s));
-  }
-  function deleteSession(id){
-    writeSessions(readSessions().filter(s=>s.id!==id));selectedSessionId=null;document.getElementById('sessionDialog').close();renderHistory();renderAllHistory();
-  }
-  function drawSessionGraph(s){
-    const canvas=document.getElementById('historyCanvas');if(!canvas||!s?.points?.length)return;
-    const rect=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,3);canvas.width=Math.max(1,Math.round(rect.width*dpr));canvas.height=Math.max(1,Math.round(rect.height*dpr));
-    const ctx=canvas.getContext('2d'),W=rect.width,H=rect.height;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);ctx.fillStyle='#0a1120';ctx.fillRect(0,0,W,H);
-    const points=normalizePoints(s.points),midis=points.map(p=>p.m),center=Number.isFinite(s.targetMidi)?s.targetMidi:medianValue(midis);
-    const low=Math.floor(Math.min(center-3,Math.min(...midis)-1)),high=Math.ceil(Math.max(center+3,Math.max(...midis)+1)),span=Math.max(6,high-low);
-    const labelW=36,left=labelW,right=W-8,top=18,bottom=H-20,dur=Math.max(1,points[points.length-1].t),x=t=>left+(t/dur)*(right-left),y=m=>top+(high-m)/span*(bottom-top);
-    ctx.font='10px -apple-system,BlinkMacSystemFont,sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';
-    for(let m=low;m<=high;m++){const yy=y(m);ctx.strokeStyle='rgba(255,255,255,.065)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.fillStyle='rgba(180,193,220,.58)';ctx.fillText(noteFromMidi(m).name,labelW-6,yy);}
-    if(Number.isFinite(s.targetMidi)){
-      const upper=y(s.targetMidi+0.15),lower=y(s.targetMidi-0.15);ctx.fillStyle='rgba(95,224,174,.08)';ctx.fillRect(left,upper,right-left,lower-upper);
-      const yy=y(s.targetMidi);ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='rgba(124,156,255,.95)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.restore();
-    }
-    const analysisSegments=splitPhrases(points);
-    analysisSegments.forEach((seg,idx)=>{
-      const t0=seg[0].t,tEnd=seg[seg.length-1].t;
-      const lx1=x(Math.min(tEnd,t0+LANDING_START_MS)),lx2=x(Math.min(tEnd,t0+LANDING_END_MS));
-      if(lx2>lx1){ctx.fillStyle='rgba(124,156,255,.07)';ctx.fillRect(lx1,top,lx2-lx1,bottom-top);}
-      const sx1=x(Math.min(tEnd,t0+SUSTAIN_START_MS)),sx2=x(Math.min(tEnd,t0+SUSTAIN_END_MS));
-      if(sx2>sx1){ctx.fillStyle='rgba(101,225,194,.045)';ctx.fillRect(sx1,top,sx2-sx1,bottom-top);}
-      ctx.fillStyle='rgba(202,214,239,.70)';ctx.font='9px -apple-system,BlinkMacSystemFont,sans-serif';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText(`발성 ${idx+1}`,Math.min(right-34,x(t0)+2),3);
-    });
-    ctx.strokeStyle='#68e0c3';ctx.lineWidth=2;ctx.lineJoin='round';ctx.lineCap='round';
-    segmentPhrases(points).forEach(seg=>{
-      if(!seg.length)return;
-      ctx.beginPath();
-      seg.forEach((p,i)=>{const xx=x(p.t),yy=y(p.m);if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);});
-      ctx.stroke();
-    });
-    ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='rgba(154,167,195,.62)';ctx.fillText('시작',left,bottom+5);ctx.textAlign='right';ctx.fillText(formatDuration(dur),right,bottom+5);
-  }
-  function clearAllHistory(){
-    if(!confirm('저장된 연습 기록을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.'))return;
-    localStorage.removeItem(STORAGE_KEY);renderHistory();renderAllHistory();
-  }
-  function injectV2Styles(){
-    if(document.getElementById('intervalAnalysisStyles'))return;
-    const style=document.createElement('style');style.id='intervalAnalysisStyles';style.textContent=`
-      .utterance-row-v2{grid-template-columns:48px 58px repeat(3,minmax(0,1fr));}
-      .utterance-note strong{font-size:13px!important;color:#e8efff}.utterance-note small{white-space:nowrap}
-      .interval-panel{margin-top:10px;border:1px solid rgba(124,156,255,.16);border-radius:16px;padding:11px;background:rgba(124,156,255,.035)}
-      .interval-panel-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;color:#dce6fb;font-size:11px;font-weight:750}.interval-panel-title small{color:var(--muted);font-size:9px;font-weight:500}
-      .interval-list{display:grid;gap:7px}.interval-row{border-top:1px solid rgba(255,255,255,.06);padding-top:8px}.interval-row:first-child{border-top:0;padding-top:0}
-      .interval-route{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.interval-route strong{font-size:12px}.interval-route small{color:var(--muted);font-size:9px}
-      .interval-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:7px}.interval-metrics span{min-width:0;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:7px;background:rgba(255,255,255,.02)}
-      .interval-metrics small{display:block;color:var(--muted);font-size:8px;margin-bottom:3px}.interval-metrics strong{display:block;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}.interval-error strong{color:var(--accent2)}
-      .interval-empty{margin:0;color:var(--muted);font-size:11px;line-height:1.5}
-      @media(max-width:420px){.utterance-row-v2{grid-template-columns:44px 52px repeat(3,minmax(0,1fr));gap:4px}.utterance-row-v2 small{font-size:7px}.utterance-row-v2 strong{font-size:10px}.interval-metrics{grid-template-columns:1fr}.interval-metrics span{display:flex;justify-content:space-between;align-items:center}.interval-metrics small{margin:0}.interval-route{align-items:flex-start;flex-direction:column;gap:2px}}
-    `;document.head.appendChild(style);
-  }
+  function ensureIntervalPanel(){if(document.getElementById('sessionIntervalPanel'))return;const u=document.querySelector('#sessionDialog .utterance-panel');if(!u)return;const p=document.createElement('div');p.id='sessionIntervalPanel';p.className='interval-panel';p.innerHTML='<div class="interval-panel-title"><span>발성 간 간격 분석</span><small>발성 중앙값 기준</small></div><div id="sessionIntervalList" class="interval-list"></div>';u.insertAdjacentElement('afterend',p);}
+  function injectStyles(){if(document.getElementById('historyV3Styles'))return;const s=document.createElement('style');s.id='historyV3Styles';s.textContent=`.utterance-row-v3{grid-template-columns:48px 58px repeat(3,minmax(0,1fr));}.utterance-note strong{font-size:13px!important;color:#e8efff}.interval-panel{margin-top:10px;border:1px solid rgba(124,156,255,.16);border-radius:16px;padding:11px;background:rgba(124,156,255,.035)}.interval-panel-title{display:flex;justify-content:space-between;gap:8px;margin-bottom:7px;color:#dce6fb;font-size:11px;font-weight:750}.interval-panel-title small{color:var(--muted);font-size:9px;font-weight:500}.interval-list{display:grid;gap:7px}.interval-row{border-top:1px solid rgba(255,255,255,.06);padding-top:8px}.interval-row:first-child{border-top:0;padding-top:0}.interval-route{display:flex;justify-content:space-between;gap:8px}.interval-route strong{font-size:12px}.interval-route small{color:var(--muted);font-size:9px}.interval-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:7px}.interval-metrics span{border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:7px;background:rgba(255,255,255,.02)}.interval-metrics small{display:block;color:var(--muted);font-size:8px}.interval-metrics strong{display:block;font-size:11px;margin-top:3px}.interval-error strong{color:var(--accent2)}@media(max-width:420px){.utterance-row-v3{grid-template-columns:42px 52px repeat(3,minmax(0,1fr));gap:4px}.utterance-row-v3 small{font-size:7px}.utterance-row-v3 strong{font-size:10px}.interval-metrics{grid-template-columns:1fr}.interval-metrics span{display:flex;justify-content:space-between;align-items:center}}`;document.head.appendChild(s);}
+  function renderUtterances(s,tech){const host=document.getElementById('sessionUtteranceList'),count=document.getElementById('sessionTechniqueCount');if(!host||!count)return;host.innerHTML='';if(!tech?.utterances?.length){count.textContent='분석 가능한 발성 없음';host.innerHTML='<p class="utterance-empty">신뢰 가능한 음정이 잡히면 짧은 발성도 이곳에 표시됩니다.</p>';return;}count.textContent=`발성 ${tech.utteranceCount}회`;tech.utterances.forEach(u=>{const actual=note(u.centerMidi),expected=Number.isFinite(u.expectedMidi)?note(u.expectedMidi):null,row=document.createElement('div');row.className='utterance-row utterance-row-v3';row.innerHTML=`<span class="utterance-index">${u.index}회</span><span class="utterance-note"><strong>${expected?`${expected.name}→${actual.name}`:actual.name}</strong><small>중앙값 ${expected?signedShort(u.referenceOffsetCents):signedShort(u.centerOffsetCents)}</small></span><span><small>초기 착지</small><strong>${signedShort(u.landingCents)}</strong></span><span><small>유지</small><strong>${signedShort(u.sustainCents)}</strong></span><span><small>드리프트</small><strong>${signedShort(u.driftCentsPerSec,'c/s')}</strong></span>`;host.appendChild(row);});}
+  function renderIntervals(s,tech){ensureIntervalPanel();const host=document.getElementById('sessionIntervalList');if(!host)return;const ints=getIntervals(s,tech);host.innerHTML='';if(!ints.length){host.innerHTML='<p class="utterance-empty">발성을 두 번 이상 나누어 내면 이동량이 표시됩니다.</p>';return;}ints.forEach((x,i)=>{const a=tech.utterances[i],b=tech.utterances[i+1],row=document.createElement('div');row.className='interval-row';const from=Number.isFinite(a.expectedMidi)?note(a.expectedMidi).name:note(a.centerMidi).name,to=Number.isFinite(b.expectedMidi)?note(b.expectedMidi).name:note(b.centerMidi).name;row.innerHTML=`<div class="interval-route"><strong>${from} → ${to}</strong><small>발성 ${x.fromIndex} → ${x.toIndex}</small></div><div class="interval-metrics"><span><small>실제 이동량</small><strong>${signed(x.actualCents)}</strong></span><span><small>목표 이동량</small><strong>${signed(x.targetCents)}</strong></span><span class="interval-error"><small>간격 오차</small><strong>${signed(x.errorCents)}</strong></span></div>`;host.appendChild(row);});}
+  function coachText(s,tech,ints){const c=P().classify(tech,ints);const extra=[];if(s.sampleCount<=4)extra.push('짧은 발성이라 세부 지표 일부는 표시되지 않을 수 있지만, 중앙 음정과 간격 분석에는 사용됩니다.');if(s.plan?.type==='interval'&&ints.length){const up=ints.filter(x=>x.targetCents>0),down=ints.filter(x=>x.targetCents<0);if(up.length&&down.length){const ue=P().median(up.map(x=>Math.abs(x.errorCents))),de=P().median(down.map(x=>Math.abs(x.errorCents)));if(Number.isFinite(ue)&&Number.isFinite(de)&&Math.abs(ue-de)>=12)extra.push(`${ue>de?'상행':'하행'} 간격에서 오차가 더 큽니다.`);}}return[c.text,...extra].join(' ');}
+  function openSession(id){const s=readSessions().find(x=>x.id===id);if(!s)return;selectedSessionId=id;const tech=getTechnique(s),ints=getIntervals(s,tech);document.getElementById('sessionTitle').textContent=describe(s);document.getElementById('sessionDate').textContent=fullDate(s.createdAt);document.getElementById('sessionLanding').textContent=tech?signed(tech.landingCents):'—';document.getElementById('sessionSustain').textContent=tech?signed(tech.sustainCents):'—';document.getElementById('sessionDrift').textContent=tech?signed(tech.driftCentsPerSec,' cent/s'):'—';document.getElementById('sessionTechniqueHint').textContent=P().classify(tech,ints).text;document.getElementById('sessionAccuracy').textContent=s.plan?.type==='interval'?(Number.isFinite(intervalScore(s))?`${Math.round(intervalScore(s))} cent`:'—'):`${Math.round(s.accuracy||0)}%`;document.querySelector('#sessionDialog .session-main-score span').textContent=s.plan?.type==='interval'?'간격 오차 중앙값':'±15 cent 전체 정확률';document.getElementById('sessionError').textContent=`${Math.round(s.avgAbsCents||0)} cent`;document.getElementById('sessionBias').textContent=signed(s.biasCents);document.getElementById('sessionLongest').textContent=duration(s.longestInTuneMs);document.getElementById('sessionVoiced').textContent=duration(s.voicedMs);document.getElementById('sessionRange').textContent=`${note(s.minMidi).name} – ${note(s.maxMidi).name}`;document.getElementById('sessionCoach').textContent=coachText(s,tech,ints);renderUtterances(s,tech);renderIntervals(s,tech);const retry=document.getElementById('retryTargetBtn');retry.classList.remove('hidden');if(s.plan?.type==='interval'){retry.textContent='이 간격으로 다시 훈련';retry.onclick=()=>{V().setTarget(s.plan.baseMidi);window.VocalTrainer?.start?.(s.plan.delta);document.getElementById('sessionDialog').close();window.scrollTo({top:0,behavior:'smooth'});};}else if(Number.isFinite(s.targetMidi)){retry.textContent='이 목표음으로 다시 연습';retry.onclick=()=>{V().setTarget(s.targetMidi);document.getElementById('sessionDialog').close();window.scrollTo({top:0,behavior:'smooth'});};}else{retry.classList.add('hidden');}document.getElementById('deleteSessionBtn').onclick=()=>deleteSession(id);document.getElementById('sessionDialog').showModal();requestAnimationFrame(()=>drawGraph(s));}
+  function deleteSession(id){writeSessions(readSessions().filter(s=>s.id!==id));selectedSessionId=null;document.getElementById('sessionDialog').close();renderHistory();renderAll();}
+  function drawGraph(s){const canvas=document.getElementById('historyCanvas');if(!canvas||!s?.points?.length)return;const pts=P().normalizePoints(s.points),rect=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,3);canvas.width=Math.max(1,Math.round(rect.width*dpr));canvas.height=Math.max(1,Math.round(rect.height*dpr));const ctx=canvas.getContext('2d'),W=rect.width,H=rect.height;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);ctx.fillStyle='#0a1120';ctx.fillRect(0,0,W,H);const mids=pts.map(p=>p.m),center=Number.isFinite(s.targetMidi)?s.targetMidi:P().median(mids),low=Math.floor(Math.min(center-3,Math.min(...mids)-1)),high=Math.ceil(Math.max(center+3,Math.max(...mids)+1)),span=Math.max(6,high-low),left=36,right=W-8,top=18,bottom=H-20,dur=Math.max(1,pts[pts.length-1].t),x=t=>left+(t/dur)*(right-left),y=m=>top+(high-m)/span*(bottom-top);ctx.font='10px -apple-system,BlinkMacSystemFont,sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';for(let m=low;m<=high;m++){const yy=y(m);ctx.strokeStyle='rgba(255,255,255,.065)';ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.fillStyle='rgba(180,193,220,.58)';ctx.fillText(note(m).name,left-6,yy);}if(Number.isFinite(s.targetMidi)){const yy=y(s.targetMidi);ctx.save();ctx.setLineDash([6,5]);ctx.strokeStyle='rgba(124,156,255,.95)';ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.restore();}const segs=P().segmentPhrases(pts,PHRASE_GAP_MS);segs.forEach((seg,i)=>{const t0=seg[0].t,t1=seg[seg.length-1].t,expected=s.plan?.pattern?.length?Number(s.plan.pattern[i%s.plan.pattern.length]):null;if(Number.isFinite(expected)){const yy=y(expected);ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle='rgba(124,156,255,.8)';ctx.beginPath();ctx.moveTo(x(t0),yy);ctx.lineTo(x(t1),yy);ctx.stroke();ctx.restore();}const lx1=x(Math.min(t1,t0+200)),lx2=x(Math.min(t1,t0+500));if(lx2>lx1){ctx.fillStyle='rgba(124,156,255,.07)';ctx.fillRect(lx1,top,lx2-lx1,bottom-top);}const sx1=x(Math.min(t1,t0+500)),sx2=x(Math.min(t1,t0+1500));if(sx2>sx1){ctx.fillStyle='rgba(101,225,194,.045)';ctx.fillRect(sx1,top,sx2-sx1,bottom-top);}ctx.fillStyle='rgba(202,214,239,.72)';ctx.font='9px -apple-system,BlinkMacSystemFont,sans-serif';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText(`발성 ${i+1}`,Math.min(right-34,x(t0)+2),3);ctx.strokeStyle='#68e0c3';ctx.lineWidth=2;ctx.beginPath();seg.forEach((p,j)=>{j?ctx.lineTo(x(p.t),y(p.m)):ctx.moveTo(x(p.t),y(p.m));});ctx.stroke();});ctx.textAlign='left';ctx.fillStyle='rgba(154,167,195,.62)';ctx.fillText('시작',left,bottom+5);ctx.textAlign='right';ctx.fillText(duration(dur),right,bottom+5);}
+  function clearAll(){if(!confirm('저장된 연습 기록을 모두 삭제할까요?'))return;localStorage.removeItem(STORAGE_KEY);renderHistory();renderAll();}
 
-  function installHooks(){
-    const originalStart=startMeasurement, originalStop=stopMeasurement, originalResult=onPitchResult, originalReset=resetSession, originalSetTarget=setTarget;
-    startMeasurement=async function(...args){const was=state.measuring,ret=await originalStart.apply(this,args);if(!was&&state.measuring)beginSession();return ret;};
-    stopMeasurement=function(...args){if(state.measuring&&live)saveLiveSession();return originalStop.apply(this,args);};
-    onPitchResult=function(result){const ret=originalResult.call(this,result),perf=performance.now();if(state.measuring&&state.lastGood&&perf-state.lastGood.now<180)captureReliablePitch(result);return ret;};
-    resetSession=function(...args){const ret=originalReset.apply(this,args);if(state.measuring)beginSession();else discardLiveSession();return ret;};
-    setTarget=function(midi){const changed=state.targetMidi!==midi;if(changed&&state.measuring&&live)saveLiveSession();const ret=originalSetTarget.call(this,midi);if(changed&&state.measuring)beginSession();return ret;};
-  }
-  function wireHistoryUi(){
-    document.getElementById('historyAllBtn')?.addEventListener('click',()=>{renderAllHistory();document.getElementById('historyDialog').showModal();});
-    document.getElementById('clearAllHistoryBtn')?.addEventListener('click',clearAllHistory);
-    window.addEventListener('resize',()=>{if(document.getElementById('sessionDialog')?.open&&selectedSessionId){const s=readSessions().find(x=>x.id===selectedSessionId);if(s)drawSessionGraph(s);}});
-  }
-  installHooks();
-  document.addEventListener('DOMContentLoaded',()=>{injectV2Styles();ensureIntervalPanel();wireHistoryUi();renderHistory();updateRecordingPill();});
+  function onTargetChange(e){if(!live||!V()?.state?.measuring)return;const d=e.detail||{};if(d.transient&&window.VocalTrainer?.isActive?.()){saveLive({silent:true});beginSession({startedAt:Date.now(),startedPerf:performance.now(),targetMidi:null});return;}if(!d.transient){saveLive({silent:true});beginSession({startedAt:Date.now(),startedPerf:performance.now(),targetMidi:d.targetMidi});}}
+  window.addEventListener('vs:measurement-start',e=>beginSession(e.detail));
+  window.addEventListener('vs:pitch',e=>capture(e.detail));
+  window.addEventListener('vs:measurement-stop',()=>saveLive());
+  window.addEventListener('vs:force-save',()=>saveDraft());
+  window.addEventListener('vs:target-change',onTargetChange);
+  window.addEventListener('vs:reset',()=>{if(V()?.state?.measuring){discardLive();beginSession({startedAt:Date.now(),startedPerf:performance.now(),targetMidi:V().state.targetMidi});}else discardLive();});
+
+  document.addEventListener('DOMContentLoaded',()=>{injectStyles();ensureIntervalPanel();recoverDraft();renderHistory();updatePill();document.getElementById('historyAllBtn')?.addEventListener('click',()=>{renderAll();document.getElementById('historyDialog').showModal();});document.getElementById('clearAllHistoryBtn')?.addEventListener('click',clearAll);window.addEventListener('resize',()=>{if(document.getElementById('sessionDialog')?.open&&selectedSessionId){const s=readSessions().find(x=>x.id===selectedSessionId);if(s)drawGraph(s);}});draftTimer=setInterval(()=>{if(live?.points?.length)saveDraft();},1500);});
+  window.addEventListener('pagehide',()=>{if(live?.points?.length)saveDraft();});
+  window.VocalHistory={readSessions,saveLive,getTechnique,getIntervals,openSession};
 })();
