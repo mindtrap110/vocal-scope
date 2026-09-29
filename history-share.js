@@ -5,7 +5,7 @@
   const PHRASE_KEY = 'vocalScopeLyricPhrasesV1';
   const EXPORT_SCHEMA = 'vocal-scope-practice-history';
   const EXPORT_VERSION = 1;
-  const DEFAULT_SUMMARY_LIMIT = 10;
+  const DEFAULT_SUMMARY_LIMIT = 6;
 
   const $ = id => document.getElementById(id);
   const V = () => window.VocalScope;
@@ -256,9 +256,14 @@
     return 'copied';
   }
 
-  function rangeValue() {
-    const value = $('shareHistoryRange')?.value || String(DEFAULT_SUMMARY_LIMIT);
-    return value === 'all' ? 'all' : Number(value) || DEFAULT_SUMMARY_LIMIT;
+  function rangeValue(total) {
+    const input = $('shareHistoryRange');
+    const maximum = Math.max(1, Number(total) || 1);
+    const entered = Math.round(Number(input?.value));
+    const fallback = Math.min(DEFAULT_SUMMARY_LIMIT, maximum);
+    const value = Math.min(maximum, Math.max(1, Number.isFinite(entered) ? entered : fallback));
+    if (input) input.value = String(value);
+    return value;
   }
 
   async function withBusyButton(button, busyLabel, task) {
@@ -284,7 +289,7 @@
     await withBusyButton(button, '공유 준비 중…', async () => {
       const sessions = readSessions();
       if (!sessions.length) return showToast('공유할 연습 기록이 없습니다.');
-      const result = await shareText(buildSummary(sessions, { limit: rangeValue() }), '보컬 스코프 연습 기록');
+      const result = await shareText(buildSummary(sessions, { limit: rangeValue(sessions.length) }), '보컬 스코프 연습 기록');
       showToast(result === 'copied' ? '요약을 복사했습니다. ChatGPT에 붙여넣으세요.' : '공유 시트를 열었습니다. ChatGPT를 선택하세요.');
     });
   }
@@ -294,7 +299,7 @@
     await withBusyButton(button, '복사 중…', async () => {
       const sessions = readSessions();
       if (!sessions.length) return showToast('복사할 연습 기록이 없습니다.');
-      await copyText(buildSummary(sessions, { limit: rangeValue() }));
+      await copyText(buildSummary(sessions, { limit: rangeValue(sessions.length) }));
       showToast('요약을 복사했습니다. ChatGPT에 붙여넣으세요.');
     });
   }
@@ -362,10 +367,10 @@
       : '아직 저장된 연습 기록이 없습니다';
     if (range) {
       range.disabled = !sessions.length;
-      for (const option of range.options) {
-        if (option.value !== 'all') option.disabled = Number(option.value) > sessions.length;
-      }
-      if (range.selectedOptions[0]?.disabled) range.value = 'all';
+      range.max = String(Math.max(1, sessions.length));
+      range.value = String(sessions.length
+        ? Math.min(sessions.length, Math.max(1, Math.round(Number(range.value)) || DEFAULT_SUMMARY_LIMIT))
+        : 1);
     }
     buttons.forEach(button => { if (button) button.disabled = !sessions.length; });
     $('historyDialog')?.close();

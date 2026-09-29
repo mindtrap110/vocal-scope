@@ -67,7 +67,8 @@
 .share-history-overview span { max-width:26ch; color:var(--muted); font-size:10px; line-height:1.45; text-align:right; }
 .share-range-field { display:block; margin-top:13px; }
 .share-range-field > span { display:block; margin:0 2px 7px; color:#dce5f7; font-size:12px; font-weight:750; }
-.share-range-field select { width:100%; min-height:47px; border:1px solid var(--line); border-radius:14px; padding:11px 13px; color:var(--text); background:#0d1628; font:inherit; font-size:14px; }
+.share-range-field input { width:100%; min-height:47px; border:1px solid var(--line); border-radius:14px; padding:11px 13px; color:var(--text); background:#0d1628; font:inherit; font-size:16px; font-variant-numeric:tabular-nums; }
+.share-range-field small { display:block; margin:6px 2px 0; color:var(--muted); font-size:10px; line-height:1.45; }
 .share-history-note { margin:10px 2px 0; color:var(--muted); font-size:11px; line-height:1.55; }
 .share-full-btn { width:100%; margin-top:9px; }
 .share-full-btn:disabled { opacity:.42; box-shadow:none; }

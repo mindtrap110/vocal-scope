@@ -1,4 +1,4 @@
-const CACHE = 'vocal-scope-v3-20260929-history-share';
+const CACHE = 'vocal-scope-v3-20260930-history-share-range';
 const ASSETS = ['./','./index.html','./styles.css','./history.css','./app.js','./history.js','./history-share.js','./vocal-scope-patch.js','./reference-tone.js','./phrase-practice.js','./pitch-core.js','./pitch-worker.js','./manifest.webmanifest','./icon-180.png','./icon-512.png'];
 
 self.addEventListener('install', event => {
