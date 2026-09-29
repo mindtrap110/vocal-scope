@@ -116,6 +116,7 @@
         <div><span class="section-kicker">PRACTICE HISTORY</span><h2>연습 기록</h2></div>
         <div class="history-heading-actions">
           <span id="historyLiveStatus" class="history-live-status">자동 저장</span>
+          <button id="historyShareBtn" class="ghost-btn" type="button">공유</button>
           <button id="historyAllBtn" class="ghost-btn">전체 보기</button>
         </div>
       </div>
@@ -165,7 +166,39 @@
         <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
       </div>
       <div id="allHistoryList" class="all-history-list"></div>
+      <button id="shareAllHistoryBtn" type="button" class="secondary-btn history-dialog-action">기록 공유·내보내기</button>
       <button id="clearAllHistoryBtn" type="button" class="danger-btn">모든 연습 기록 삭제</button>
+    </form>
+  </dialog>
+
+  <dialog id="shareHistoryDialog" class="sheet">
+    <form method="dialog" class="sheet-inner share-history-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span class="section-kicker">SHARE &amp; EXPORT</span><h2>연습 기록 공유</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <div class="share-history-overview">
+        <strong id="shareHistoryCount">저장된 연습 기록 0개</strong>
+        <span>공유하기 전까지 기록은 이 기기에만 있습니다.</span>
+      </div>
+      <label class="share-range-field">
+        <span>ChatGPT 요약 범위</span>
+        <select id="shareHistoryRange">
+          <option value="5">최근 5개</option>
+          <option value="10" selected>최근 10개</option>
+          <option value="20">최근 20개</option>
+          <option value="all">전체 기록</option>
+        </select>
+      </label>
+      <p class="share-history-note">요약에는 보컬 코칭 요청문과 주요 수치가 함께 들어갑니다. iPhone 공유 시트가 열리면 ChatGPT를 선택하세요. 보이지 않으면 ‘요약 복사’를 눌러 채팅에 붙여넣으면 됩니다.</p>
+      <button id="shareChatGptBtn" type="button" class="primary-btn share-full-btn">ChatGPT용 요약 공유</button>
+      <button id="copyHistorySummaryBtn" type="button" class="secondary-btn share-full-btn">요약 복사</button>
+      <button id="exportHistoryJsonBtn" type="button" class="secondary-btn share-full-btn">전체 원본 JSON 내보내기</button>
+      <div class="share-privacy-note">
+        <strong>파일에 포함되는 내용</strong>
+        <span>날짜, 목표음, cent 분석, 음역, 음정 좌표와 사용한 가사. 음성 녹음은 포함되지 않습니다.</span>
+      </div>
     </form>
   </dialog>
 
@@ -246,6 +279,7 @@
       <div class="history-graph-wrap"><canvas id="historyCanvas" aria-label="과거 연습 음정 그래프"></canvas></div>
       <div id="historyGraphNote" class="history-graph-note">청록색 = 실제 음정 · 파란 점선 = 목표음 · 옅은 파랑 = 초기 착지 창 · 옅은 청록 = 유지 구간 창. 각 창은 발성이 다시 시작될 때마다 새로 계산됩니다.</div>
       <div class="coach-card"><span class="section-kicker">NEXT PRACTICE</span><p id="sessionCoach"></p></div>
+      <button id="shareSessionBtn" type="button" class="secondary-btn session-share-btn">이 기록 공유</button>
       <button id="retryTargetBtn" type="button" class="primary-btn">이 목표음으로 다시 연습</button>
       <button id="deleteSessionBtn" type="button" class="danger-btn">이 기록 삭제</button>
     </form>
@@ -264,6 +298,7 @@
         <li>중간에 숨을 쉬거나 소리가 끊기면 다음 발성을 별도 반복으로 구분해, 기록 화면에서 발성별 수치를 따로 볼 수 있습니다.</li>
         <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
         <li>‘가사 구절 연습’에서는 짧은 가사를 저장해 화면에 띄운 채 여러 테이크를 부를 수 있습니다. 정답 멜로디를 판정하는 모드는 아니며, 각 테이크의 실제 음정 흐름과 음역을 비교하는 용도입니다.</li>
+        <li>‘연습 기록’의 공유 버튼에서는 ChatGPT가 읽기 좋은 요약을 공유·복사하거나, 모든 음정 좌표가 든 JSON 파일을 내보낼 수 있습니다.</li>
       </ol>
       <div class="help-callout">착지가 정확한데 유지 구간이 낮아지고 드리프트가 음수라면 ‘처음 음을 못 찾는 문제’가 아니라 ‘맞춘 뒤 내려가는 문제’로 볼 수 있습니다. 소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요.</div>
     </form>
@@ -282,6 +317,7 @@
   <script src="./pitch-core.js"></script>
   <script src="./app.js" defer></script>
   <script src="./history.js" defer></script>
+  <script src="./history-share.js" defer></script>
   <script src="./vocal-scope-patch.js" defer></script>
   <script src="./reference-tone.js" defer></script>
   <script src="./phrase-practice.js" defer></script>

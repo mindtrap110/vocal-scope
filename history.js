@@ -97,6 +97,7 @@
     document.getElementById('sessionVoiced').textContent=duration(s.voicedMs);
     document.getElementById('sessionRange').textContent=`${note(s.minMidi).name} – ${note(s.maxMidi).name}`;
     document.getElementById('sessionCoach').textContent=coachText(s,tech,ints);
+    document.getElementById('shareSessionBtn').onclick=()=>window.VocalHistoryShare?.shareSession?.(id);
     renderUtterances(s,tech);
     renderIntervals(s,tech);
     const retry=document.getElementById('retryTargetBtn');

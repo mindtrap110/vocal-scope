@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.1.0';
-const BUILD_ID = '2026-09-29-lyric-phrase';
+const APP_VERSION = '3.2.0';
+const BUILD_ID = '2026-09-29-history-share';
 
 const state = {
   measuring: false,
