@@ -69,6 +69,35 @@
       </div>
     </section>
 
+    <section id="phraseCard" class="phrase-card card">
+      <div class="section-heading phrase-heading">
+        <div><span class="section-kicker">LYRIC PHRASE</span><h2>가사 구절 연습</h2></div>
+        <button id="phraseLibraryBtn" class="ghost-btn" type="button">구절 목록</button>
+      </div>
+
+      <div id="phraseEmpty" class="phrase-empty-state">
+        <p>짧은 가사 구절을 등록하면 가사를 보면서 부르고, 실제 음정 흐름을 테이크별로 저장할 수 있습니다.</p>
+        <button id="phraseCreateBtn" class="phrase-create-btn" type="button">첫 구절 만들기</button>
+      </div>
+
+      <div id="phraseReady" class="hidden">
+        <div class="phrase-meta-row">
+          <span id="phraseModeBadge" class="phrase-mode-badge">준비</span>
+          <button id="phraseEditBtn" class="phrase-text-btn" type="button">편집</button>
+        </div>
+        <h3 id="phraseTitle" class="phrase-title">—</h3>
+        <div id="phraseLyrics" class="phrase-lyrics"></div>
+        <div id="phraseStartNote" class="phrase-start-note hidden"></div>
+        <p id="phraseGuide" class="phrase-guide">이 모드는 정답 멜로디를 판정하지 않고, 부른 음정 흐름을 그대로 기록합니다.</p>
+        <div class="phrase-actions">
+          <button id="phraseToneBtn" class="phrase-secondary-btn" type="button">첫 음 듣기</button>
+          <button id="phrasePracticeBtn" class="phrase-primary-btn" type="button">이 구절 연습</button>
+        </div>
+        <button id="phraseDeactivateBtn" class="phrase-finish-btn hidden" type="button">구절 연습 끝내기</button>
+        <div id="phraseLastResult" class="phrase-last-result hidden" aria-live="polite"></div>
+      </div>
+    </section>
+
     <section class="graph-card card">
       <div class="section-heading graph-heading">
         <div><span class="section-kicker">PITCH FLOW</span><h2>최근 12초 음정 흐름</h2></div>
@@ -140,6 +169,48 @@
     </form>
   </dialog>
 
+  <dialog id="phraseLibraryDialog" class="sheet">
+    <form method="dialog" class="sheet-inner phrase-library-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span class="section-kicker">LYRIC LIBRARY</span><h2>저장한 구절</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <div id="phraseLibraryList" class="phrase-library-list"></div>
+      <button id="phraseLibraryCreateBtn" class="primary-btn phrase-full-btn" type="button">새 구절 만들기</button>
+    </form>
+  </dialog>
+
+  <dialog id="phraseEditorDialog" class="sheet">
+    <form id="phraseEditorForm" class="sheet-inner phrase-editor-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span class="section-kicker">PHRASE EDITOR</span><h2 id="phraseEditorHeading">구절 만들기</h2></div>
+        <button id="phraseEditorCloseBtn" class="icon-btn" type="button" aria-label="닫기">×</button>
+      </div>
+      <input id="phraseEditorId" type="hidden" />
+      <label class="phrase-field">
+        <span>구절 이름</span>
+        <input id="phraseTitleInput" type="text" maxlength="40" placeholder="예: Smells Like Teen Spirit · 벌스 1" autocomplete="off" required />
+      </label>
+      <label class="phrase-field">
+        <span>연습할 가사</span>
+        <textarea id="phraseLyricsInput" maxlength="240" rows="5" placeholder="한 번에 부를 짧은 구절을 입력하세요.&#10;줄바꿈도 그대로 표시됩니다." required></textarea>
+        <small><span id="phraseLyricsCount">0</span>/240자 · 한 번에 약 5~15초 분량을 권장합니다.</small>
+      </label>
+      <label class="phrase-field">
+        <span>첫 음 <em>선택</em></span>
+        <select id="phraseStartMidiInput">
+          <option value="">설정하지 않음</option>
+        </select>
+        <small>설정하면 부르기 전에 기준음을 들을 수 있습니다. 전체 멜로디의 정답 판정에는 사용하지 않습니다.</small>
+      </label>
+      <p id="phraseEditorError" class="phrase-editor-error" role="alert"></p>
+      <button class="primary-btn phrase-full-btn" type="submit">구절 저장</button>
+      <button id="phraseDeleteBtn" class="danger-btn hidden" type="button">이 구절 삭제</button>
+    </form>
+  </dialog>
+
   <dialog id="sessionDialog" class="sheet">
     <form method="dialog" class="sheet-inner session-sheet">
       <div class="sheet-handle"></div>
@@ -166,14 +237,14 @@
 
       <div class="session-main-score secondary-score"><span>±15 cent 전체 정확률</span><strong id="sessionAccuracy">—</strong></div>
       <div class="session-stat-grid">
-        <div><span>전체 평균 절대 오차 · 참고</span><strong id="sessionError">—</strong></div>
-        <div><span>전체 평균 치우침</span><strong id="sessionBias">—</strong></div>
-        <div><span>최장 정확 유지</span><strong id="sessionLongest">—</strong></div>
-        <div><span>유효 음성 시간</span><strong id="sessionVoiced">—</strong></div>
-        <div><span>측정 음역</span><strong id="sessionRange">—</strong></div>
+        <div><span id="sessionErrorLabel">전체 평균 절대 오차 · 참고</span><strong id="sessionError">—</strong></div>
+        <div><span id="sessionBiasLabel">전체 평균 치우침</span><strong id="sessionBias">—</strong></div>
+        <div><span id="sessionLongestLabel">최장 정확 유지</span><strong id="sessionLongest">—</strong></div>
+        <div><span id="sessionVoicedLabel">유효 음성 시간</span><strong id="sessionVoiced">—</strong></div>
+        <div><span id="sessionRangeLabel">측정 음역</span><strong id="sessionRange">—</strong></div>
       </div>
       <div class="history-graph-wrap"><canvas id="historyCanvas" aria-label="과거 연습 음정 그래프"></canvas></div>
-      <div class="history-graph-note">청록색 = 실제 음정 · 파란 점선 = 목표음 · 옅은 파랑 = 초기 착지 창 · 옅은 청록 = 유지 구간 창. 각 창은 발성이 다시 시작될 때마다 새로 계산됩니다.</div>
+      <div id="historyGraphNote" class="history-graph-note">청록색 = 실제 음정 · 파란 점선 = 목표음 · 옅은 파랑 = 초기 착지 창 · 옅은 청록 = 유지 구간 창. 각 창은 발성이 다시 시작될 때마다 새로 계산됩니다.</div>
       <div class="coach-card"><span class="section-kicker">NEXT PRACTICE</span><p id="sessionCoach"></p></div>
       <button id="retryTargetBtn" type="button" class="primary-btn">이 목표음으로 다시 연습</button>
       <button id="deleteSessionBtn" type="button" class="danger-btn">이 기록 삭제</button>
@@ -192,6 +263,7 @@
         <li>목표음 연습을 끝내면 첫 안정 검출 뒤 0.2~0.5초의 ‘초기 착지’, 0.5~1.5초의 ‘유지 구간’, 그리고 발성 중 초당 cent 변화인 ‘드리프트’를 자동 계산합니다.</li>
         <li>중간에 숨을 쉬거나 소리가 끊기면 다음 발성을 별도 반복으로 구분해, 기록 화면에서 발성별 수치를 따로 볼 수 있습니다.</li>
         <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
+        <li>‘가사 구절 연습’에서는 짧은 가사를 저장해 화면에 띄운 채 여러 테이크를 부를 수 있습니다. 정답 멜로디를 판정하는 모드는 아니며, 각 테이크의 실제 음정 흐름과 음역을 비교하는 용도입니다.</li>
       </ol>
       <div class="help-callout">착지가 정확한데 유지 구간이 낮아지고 드리프트가 음수라면 ‘처음 음을 못 찾는 문제’가 아니라 ‘맞춘 뒤 내려가는 문제’로 볼 수 있습니다. 소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요.</div>
     </form>
@@ -212,5 +284,6 @@
   <script src="./history.js" defer></script>
   <script src="./vocal-scope-patch.js" defer></script>
   <script src="./reference-tone.js" defer></script>
+  <script src="./phrase-practice.js" defer></script>
 </body>
 </html>

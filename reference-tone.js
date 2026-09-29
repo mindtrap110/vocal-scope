@@ -212,6 +212,7 @@
       refreshButton();
       return result;
     };
+    if (window.VocalScope) window.VocalScope.setTarget = setTarget;
   }
 
   window.VocalScopeReferenceTone = {
