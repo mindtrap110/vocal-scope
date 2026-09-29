@@ -191,6 +191,9 @@
 
   function buildExportPayload(sessions = readSessions()) {
     const records = Array.isArray(sessions) ? sessions : [];
+    const phraseIds = new Set(records
+      .filter(session => session?.plan?.type === 'phrase' && session.plan.phraseId)
+      .map(session => session.plan.phraseId));
     return {
       schema: EXPORT_SCHEMA,
       schemaVersion: EXPORT_VERSION,
@@ -217,8 +220,22 @@
       suggestedAnalysis: '반복되는 강점과 문제 경향을 찾고, 교정 우선순위 1~2개와 다음 10분 연습 루틴을 제안해 주세요. 근거가 부족한 결론은 추정이라고 표시해 주세요.',
       recordCount: records.length,
       sessions: records,
-      phraseLibrary: readJsonArray(PHRASE_KEY),
+      phraseLibrary: readJsonArray(PHRASE_KEY).filter(phrase => phraseIds.has(phrase?.id)),
     };
+  }
+
+  function buildDetailedText(sessions) {
+    const payload = buildExportPayload(sessions);
+    return [
+      '# 보컬 스코프 상세 연습 기록',
+      '',
+      '이 파일에는 선택한 연습 기록의 요약 수치와 전체 음정 좌표가 들어 있습니다.',
+      '아래 데이터를 보컬 코치처럼 분석해 반복되는 강점과 문제 경향, 교정 우선순위 1~2개, 다음 10분 연습 루틴을 제안해 주세요.',
+      '가사 구절 기록은 기준 멜로디가 없으므로 멜로디 정확도로 평가하지 말고, 근거가 부족한 결론은 추정이라고 표시해 주세요.',
+      '음성 녹음은 포함되어 있지 않습니다.',
+      '',
+      JSON.stringify(payload, null, 2),
+    ].join('\n');
   }
 
   function showToast(message) {
@@ -312,33 +329,65 @@
     return parts.join('-');
   }
 
+  async function shareOrDownloadFile({ content, filename, type }) {
+    const blob = new Blob([content], { type });
+    const file = typeof File === 'function' ? new File([blob], filename, { type }) : null;
+    if (file && navigator.share && navigator.canShare?.({ files: [file] })) {
+      // Send only the file. Some iOS share extensions discard the attachment
+      // when a separate text payload is supplied alongside it.
+      await navigator.share({ files: [file] });
+      return 'shared';
+    }
+    const url = URL.createObjectURL(file || blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return 'downloaded';
+  }
+
+  function selectedSessions() {
+    const sessions = readSessions();
+    return {
+      all: sessions,
+      selected: sessions.slice(0, rangeValue(sessions.length)),
+    };
+  }
+
+  async function shareDetailedFile() {
+    const button = $('shareDetailedHistoryBtn');
+    await withBusyButton(button, '상세 파일 만드는 중…', async () => {
+      const { all, selected } = selectedSessions();
+      if (!all.length) return showToast('공유할 연습 기록이 없습니다.');
+      const filename = `vocal-scope-chatgpt-${selected.length}-records-${localDateStamp()}.txt`;
+      const result = await shareOrDownloadFile({
+        content: buildDetailedText(selected),
+        filename,
+        type: 'text/plain;charset=utf-8',
+      });
+      showToast(result === 'shared'
+        ? `최근 ${selected.length}개 상세 파일을 공유합니다.`
+        : `최근 ${selected.length}개 상세 TXT 파일을 저장했습니다.`);
+    });
+  }
+
   async function exportJson() {
     const button = $('exportHistoryJsonBtn');
     await withBusyButton(button, '파일 만드는 중…', async () => {
-      const sessions = readSessions();
-      if (!sessions.length) return showToast('내보낼 연습 기록이 없습니다.');
-      const filename = `vocal-scope-history-${localDateStamp()}.json`;
-      const json = JSON.stringify(buildExportPayload(sessions), null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const file = typeof File === 'function' ? new File([blob], filename, { type: 'application/json' }) : null;
-      if (file && navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          title: '보컬 스코프 전체 연습 기록',
-          text: 'ChatGPT에서 이 파일을 열고 보컬 연습 경향과 다음 연습 계획을 분석해 주세요.',
-          files: [file],
-        });
-        showToast('파일 공유 시트를 열었습니다.');
-        return;
-      }
-      const url = URL.createObjectURL(file || blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
-      showToast('전체 기록 JSON 파일을 만들었습니다.');
+      const { all, selected } = selectedSessions();
+      if (!all.length) return showToast('내보낼 연습 기록이 없습니다.');
+      const filename = `vocal-scope-history-${selected.length}-records-${localDateStamp()}.json`;
+      const result = await shareOrDownloadFile({
+        content: JSON.stringify(buildExportPayload(selected), null, 2),
+        filename,
+        type: 'application/json',
+      });
+      showToast(result === 'shared'
+        ? `최근 ${selected.length}개 JSON 파일을 공유합니다.`
+        : `최근 ${selected.length}개 JSON 파일을 저장했습니다.`);
     });
   }
 
@@ -361,7 +410,7 @@
     const sessions = readSessions();
     const count = $('shareHistoryCount');
     const range = $('shareHistoryRange');
-    const buttons = [$('shareChatGptBtn'), $('copyHistorySummaryBtn'), $('exportHistoryJsonBtn')];
+    const buttons = [$('shareChatGptBtn'), $('copyHistorySummaryBtn'), $('shareDetailedHistoryBtn'), $('exportHistoryJsonBtn')];
     if (count) count.textContent = sessions.length
       ? `저장된 연습 기록 ${sessions.length}개`
       : '아직 저장된 연습 기록이 없습니다';
@@ -382,6 +431,7 @@
     $('shareAllHistoryBtn')?.addEventListener('click', openShareDialog);
     $('shareChatGptBtn')?.addEventListener('click', shareSummary);
     $('copyHistorySummaryBtn')?.addEventListener('click', copySummary);
+    $('shareDetailedHistoryBtn')?.addEventListener('click', shareDetailedFile);
     $('exportHistoryJsonBtn')?.addEventListener('click', exportJson);
   }
 
@@ -389,6 +439,7 @@
   window.VocalHistoryShare = {
     buildSummary,
     buildExportPayload,
+    buildDetailedText,
     shareSession,
     openShareDialog,
   };
