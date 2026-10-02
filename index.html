@@ -125,6 +125,23 @@
       <p id="historyEmpty" class="history-empty">목표음을 선택해 2~3초씩 유지해 보세요. 측정을 끝내면 초기 착지·유지 구간·드리프트와 전체 그래프가 이곳에 남습니다.</p>
     </section>
 
+    <section class="recording-card card">
+      <div class="section-heading recording-heading">
+        <div><span class="section-kicker">AUDIO RECORDING</span><h2>연습 녹음</h2></div>
+        <label class="recording-toggle-control">
+          <input id="recordingEnabledToggle" type="checkbox" />
+          <span class="recording-toggle-track" aria-hidden="true"><i></i></span>
+          <strong id="recordingToggleLabel">꺼짐</strong>
+        </label>
+      </div>
+      <p id="recordingStatus" class="recording-status">필요할 때 켜면 다음 측정부터 녹음합니다.</p>
+      <div class="recording-footer">
+        <span id="recordingStorageSummary">저장된 녹음 확인 중…</span>
+        <button id="recordingLibraryBtn" class="ghost-btn" type="button">녹음 목록</button>
+      </div>
+      <p class="recording-storage-note">녹음은 이 기기에만 저장됩니다. 다른 앱으로 이동하면 현재 측정을 끝내고 녹음을 저장합니다. 중요한 파일은 ‘공유’ 또는 ‘파일 저장’으로 별도 보관하세요.</p>
+    </section>
+
     <section class="signal-card card">
       <div class="section-heading compact"><h2>입력 상태</h2><span id="confidenceText" class="muted">신뢰도 —</span></div>
       <div class="level-row"><span>마이크</span><div class="level-track"><div id="levelBar" class="level-fill"></div></div></div>
@@ -211,6 +228,19 @@
     </form>
   </dialog>
 
+  <dialog id="recordingLibraryDialog" class="sheet">
+    <form method="dialog" class="sheet-inner recording-library-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title-row">
+        <div><span class="section-kicker">AUDIO LIBRARY</span><h2>저장된 연습 녹음</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
+      </div>
+      <p id="recordingLibrarySummary" class="recording-library-summary">녹음을 불러오는 중…</p>
+      <div id="recordingLibraryList" class="recording-library-list"></div>
+      <button id="clearAllRecordingsBtn" type="button" class="danger-btn hidden">모든 녹음 파일 삭제</button>
+    </form>
+  </dialog>
+
   <dialog id="phraseEditorDialog" class="sheet">
     <form id="phraseEditorForm" class="sheet-inner phrase-editor-sheet">
       <div class="sheet-handle"></div>
@@ -275,6 +305,19 @@
       </div>
       <div class="history-graph-wrap"><canvas id="historyCanvas" aria-label="과거 연습 음정 그래프"></canvas></div>
       <div id="historyGraphNote" class="history-graph-note">청록색 = 실제 음정 · 파란 점선 = 목표음 · 옅은 파랑 = 초기 착지 창 · 옅은 청록 = 유지 구간 창. 각 창은 발성이 다시 시작될 때마다 새로 계산됩니다.</div>
+      <div id="sessionRecordingPanel" class="session-recording-panel">
+        <div class="session-recording-head"><strong>연습 녹음</strong><span id="sessionRecordingBadge">녹음 없음</span></div>
+        <p id="sessionRecordingEmpty" class="session-recording-empty">이 연습 기록에는 연결된 녹음이 없습니다.</p>
+        <div id="sessionRecordingContent" class="hidden">
+          <span id="sessionRecordingMeta" class="session-recording-meta">—</span>
+          <audio id="sessionRecordingPlayer" controls preload="metadata" playsinline></audio>
+          <div class="session-recording-actions">
+            <button id="sessionRecordingShareBtn" type="button">공유</button>
+            <button id="sessionRecordingDownloadBtn" type="button">파일 저장</button>
+            <button id="sessionRecordingDeleteBtn" type="button" class="danger">녹음 삭제</button>
+          </div>
+        </div>
+      </div>
       <div class="coach-card"><span class="section-kicker">NEXT PRACTICE</span><p id="sessionCoach"></p></div>
       <button id="shareSessionBtn" type="button" class="secondary-btn session-share-btn">이 기록 공유</button>
       <button id="retryTargetBtn" type="button" class="primary-btn">이 목표음으로 다시 연습</button>
@@ -296,6 +339,7 @@
         <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
         <li>‘가사 구절 연습’에서는 짧은 가사를 저장해 화면에 띄운 채 여러 테이크를 부를 수 있습니다. 정답 멜로디를 판정하는 모드는 아니며, 각 테이크의 실제 음정 흐름과 음역을 비교하는 용도입니다.</li>
         <li>‘연습 기록’의 공유 버튼에서는 ChatGPT가 읽기 좋은 요약을 공유·복사하거나, 모든 음정 좌표가 든 JSON 파일을 내보낼 수 있습니다.</li>
+        <li>‘연습 녹음’을 켜면 측정과 동시에 음성을 녹음해 기기에 저장합니다. 기록 상세 화면에서 재생하거나 파일로 저장·공유할 수 있습니다. 녹음 중 다른 앱으로 이동하면 파일 보호를 위해 현재 측정을 종료합니다.</li>
       </ol>
       <div class="help-callout">착지가 정확한데 유지 구간이 낮아지고 드리프트가 음수라면 ‘처음 음을 못 찾는 문제’가 아니라 ‘맞춘 뒤 내려가는 문제’로 볼 수 있습니다. 소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요.</div>
     </form>
@@ -318,5 +362,6 @@
   <script src="./vocal-scope-patch.js" defer></script>
   <script src="./reference-tone.js" defer></script>
   <script src="./phrase-practice.js" defer></script>
+  <script src="./recording.js" defer></script>
 </body>
 </html>

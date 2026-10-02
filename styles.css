@@ -51,7 +51,7 @@ h2 { margin:0; font-size:18px; letter-spacing:-.025em; }
 .meter-center { position:absolute; left:50%; top:-4px; width:1px; height:19px; background:rgba(255,255,255,.75); }
 .meter-needle { position:absolute; left:50%; top:-5px; width:4px; height:21px; border-radius:999px; background:#fff; box-shadow:0 0 12px rgba(255,255,255,.7); transition:left 70ms linear; }
 .meter-hint { color:var(--muted); font-size:12px; text-align:center; margin-top:10px; min-height:17px; }
-.target-summary, .phrase-card, .graph-card, .signal-card { margin-top:12px; padding:16px; }
+.target-summary, .phrase-card, .graph-card, .signal-card, .recording-card { margin-top:12px; padding:16px; }
 .hidden { display:none !important; }
 .section-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; }
 .section-heading > div:first-child { min-width:0; }
@@ -141,6 +141,38 @@ canvas { width:100%; height:100%; display:block; }
 .phrase-session-panel { margin-bottom:12px; border:1px solid rgba(124,156,255,.18); border-radius:17px; padding:13px; background:linear-gradient(135deg,rgba(124,156,255,.08),rgba(101,225,194,.035)); }
 .phrase-session-panel strong { display:block; color:#dce6fb; font-size:12px; }
 .phrase-session-panel p { margin:7px 0 0; color:#fff; font-size:17px; font-weight:680; line-height:1.45; white-space:pre-wrap; word-break:keep-all; overflow-wrap:anywhere; }
+.recording-heading { align-items:center; }
+.recording-toggle-control { display:flex; align-items:center; gap:7px; cursor:pointer; }
+.recording-toggle-control input { position:absolute; opacity:0; pointer-events:none; }
+.recording-toggle-track { position:relative; display:block; width:39px; height:23px; border:1px solid var(--line); border-radius:999px; background:#202a3e; transition:background .2s,border-color .2s; }
+.recording-toggle-track i { position:absolute; width:17px; height:17px; left:2px; top:2px; border-radius:50%; background:#8290aa; transition:transform .2s,background .2s; }
+.recording-toggle-control input:checked + .recording-toggle-track { border-color:rgba(101,225,194,.35); background:rgba(101,225,194,.18); }
+.recording-toggle-control input:checked + .recording-toggle-track i { transform:translateX(16px); background:var(--accent2); }
+.recording-toggle-control input:focus-visible + .recording-toggle-track { outline:2px solid var(--accent); outline-offset:2px; }
+.recording-toggle-control input:disabled + .recording-toggle-track { opacity:.45; }
+.recording-toggle-control strong { min-width:27px; color:#dce5f7; font-size:11px; }
+.recording-status { margin:12px 0 0; color:var(--muted); font-size:11px; line-height:1.5; }
+.recording-status.live { color:var(--accent2); }
+.recording-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:11px; border-top:1px solid rgba(255,255,255,.06); padding-top:11px; }
+.recording-footer > span { color:#cbd6eb; font-size:11px; }
+.recording-storage-note { margin:8px 1px 0; color:#7f8ca7; font-size:9px; line-height:1.45; }
+.recording-library-summary { margin:0 0 10px; color:var(--muted); font-size:11px; }
+.recording-library-list { display:grid; gap:9px; }
+.recording-library-row { border:1px solid var(--line); border-radius:17px; padding:12px; background:rgba(255,255,255,.025); }
+.recording-library-head strong, .recording-library-head small { display:block; }
+.recording-library-head strong { color:#e2eaff; font-size:13px; }
+.recording-library-head small { margin-top:4px; color:var(--muted); font-size:9px; }
+.recording-library-row audio { width:100%; height:38px; margin-top:9px; }
+.recording-row-actions, .session-recording-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; }
+.recording-action-btn, .session-recording-actions button { min-height:38px; border:1px solid var(--line); border-radius:11px; color:#dbe5f8; background:rgba(255,255,255,.035); font-size:10px; font-weight:700; }
+.recording-action-btn.danger, .session-recording-actions button.danger { color:#ff9dac; border-color:rgba(255,125,142,.18); background:rgba(255,125,142,.055); }
+.session-recording-panel { margin-top:10px; border:1px solid rgba(101,225,194,.16); border-radius:16px; padding:12px; background:rgba(101,225,194,.035); }
+.session-recording-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.session-recording-head strong { color:#dce7f8; font-size:11px; }
+.session-recording-head span { color:var(--accent2); font-size:9px; }
+.session-recording-empty { margin:8px 0 0; color:var(--muted); font-size:10px; line-height:1.45; }
+.session-recording-meta { display:block; margin-top:7px; color:var(--muted); font-size:9px; }
+.session-recording-panel audio { width:100%; height:40px; margin-top:7px; }
 .help-sheet ol { padding-left:22px; color:#d9e2f5; line-height:1.65; font-size:14px; }
 .help-callout { border:1px solid rgba(255,209,102,.2); background:rgba(255,209,102,.07); color:#f0dfae; border-radius:16px; padding:13px; font-size:12px; line-height:1.55; }
 @media (max-width:420px) {

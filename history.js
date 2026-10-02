@@ -29,7 +29,7 @@
   function beginSession(detail={}){const plan=window.VocalPhrasePractice?.getPlanSnapshot?.()||window.VocalTrainer?.getPlanSnapshot?.()||null;live={id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,startedAt:detail.startedAt||Date.now(),startedPerf:Number.isFinite(detail.startedPerf)?detail.startedPerf:performance.now(),targetMidi:plan?null:(Number.isFinite(detail.targetMidi)?detail.targetMidi:V()?.state?.targetMidi??null),plan,points:[],lastCapturePerf:-Infinity,updatedAt:Date.now()};saveDraft();updatePill();}
   function capture(detail){if(!live||!Number.isFinite(detail?.midi))return;const now=Number.isFinite(detail.now)?detail.now:performance.now();if(now-live.lastCapturePerf<CAPTURE_INTERVAL_MS)return;live.lastCapturePerf=now;live.points.push({t:Math.max(0,Math.round(now-live.startedPerf)),m:Math.round(detail.midi*1000)/1000});live.updatedAt=Date.now();if(live.points.length===1)updatePill('짧은 발성도 저장 중');}
   function buildRecord(src,{recovered=false}={}){const points=P().normalizePoints(src?.points||[]);if(!points.length)return null;const metrics=P().sessionMetrics(points,src.targetMidi);if(!metrics)return null;const tech=P().analyzeTechnique(points,{targetMidi:src.targetMidi,plan:src.plan,gapMs:PHRASE_GAP_MS,captureIntervalMs:CAPTURE_INTERVAL_MS});return{id:src.id||`${src.startedAt}-${Math.random().toString(36).slice(2,7)}`,createdAt:src.startedAt||Date.now(),durationMs:Math.max(metrics.voicedMs,Date.now()-(src.startedAt||Date.now())),voicedMs:metrics.voicedMs,targetMidi:Number.isFinite(src.targetMidi)?src.targetMidi:null,plan:src.plan||null,accuracy:metrics.accuracy,avgAbsCents:metrics.avgAbsCents,biasCents:metrics.biasCents,medianCents:metrics.medianCents,longestInTuneMs:metrics.longestInTuneMs,minMidi:metrics.minMidi,maxMidi:metrics.maxMidi,sampleCount:metrics.sampleCount,technique:tech,points:points.map(p=>[p.t,p.m]),recovered:!!recovered,analysisVersion:3};}
-  function saveLive({silent=false}={}){if(!live)return null;const record=buildRecord(live);live=null;clearDraft();updatePill();if(!record)return null;const sessions=readSessions().filter(s=>s.id!==record.id);sessions.unshift(record);writeSessions(sessions);renderHistory();if(!silent)toast(record.sampleCount<=4?'짧은 발성도 저장했습니다':'연습 기록을 저장했습니다');return record;}
+  function saveLive({silent=false}={}){if(!live)return null;const record=buildRecord(live);live=null;clearDraft();updatePill();if(!record)return null;const sessions=readSessions().filter(s=>s.id!==record.id);sessions.unshift(record);writeSessions(sessions);renderHistory();window.dispatchEvent(new CustomEvent('vs:history-saved',{detail:{record}}));if(!silent)toast(record.sampleCount<=4?'짧은 발성도 저장했습니다':'연습 기록을 저장했습니다');return record;}
   function discardLive(){live=null;clearDraft();updatePill();}
   function saveDraft(){if(!live?.points?.length)return;try{localStorage.setItem(DRAFT_KEY,JSON.stringify({...live,updatedAt:Date.now()}));}catch(_){} }
   function clearDraft(){try{localStorage.removeItem(DRAFT_KEY);}catch(_){} }
@@ -114,9 +114,10 @@
     }else retry.classList.add('hidden');
     document.getElementById('deleteSessionBtn').onclick=()=>deleteSession(id);
     document.getElementById('sessionDialog').showModal();
+    window.dispatchEvent(new CustomEvent('vs:history-session-open',{detail:{id}}));
     requestAnimationFrame(()=>drawGraph(s));
   }
-  function deleteSession(id){writeSessions(readSessions().filter(s=>s.id!==id));selectedSessionId=null;document.getElementById('sessionDialog').close();renderHistory();renderAll();}
+  function deleteSession(id){if(!confirm('이 연습 기록을 삭제할까요? 이 기록에만 연결된 녹음도 함께 삭제되며 복구할 수 없습니다.'))return;writeSessions(readSessions().filter(s=>s.id!==id));window.dispatchEvent(new CustomEvent('vs:history-session-deleted',{detail:{id}}));selectedSessionId=null;document.getElementById('sessionDialog').close();renderHistory();renderAll();}
   function drawGraph(s){
     const canvas=document.getElementById('historyCanvas');
     if(!canvas||!s?.points?.length)return;
@@ -150,7 +151,7 @@
     });
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='rgba(154,167,195,.62)';ctx.fillText('시작',left,bottom+5);ctx.textAlign='right';ctx.fillText(duration(dur),right,bottom+5);
   }
-  function clearAll(){if(!confirm('저장된 연습 기록을 모두 삭제할까요?'))return;localStorage.removeItem(STORAGE_KEY);renderHistory();renderAll();}
+  function clearAll(){if(!confirm('저장된 모든 연습 기록과 녹음 파일을 삭제할까요? 복구할 수 없습니다.'))return;localStorage.removeItem(STORAGE_KEY);window.dispatchEvent(new CustomEvent('vs:history-cleared'));renderHistory();renderAll();}
 
   function onTargetChange(e){if(!live||!V()?.state?.measuring)return;const d=e.detail||{};if(d.transient&&window.VocalTrainer?.isActive?.()){saveLive({silent:true});beginSession({startedAt:Date.now(),startedPerf:performance.now(),targetMidi:null});return;}if(!d.transient){saveLive({silent:true});beginSession({startedAt:Date.now(),startedPerf:performance.now(),targetMidi:d.targetMidi});}}
   window.addEventListener('vs:measurement-start',e=>beginSession(e.detail));

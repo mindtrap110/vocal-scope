@@ -1,5 +1,5 @@
-const CACHE = 'vocal-scope-v3-20260930-history-file-share-fix';
-const ASSETS = ['./','./index.html','./styles.css','./history.css','./app.js','./history.js','./history-share.js','./vocal-scope-patch.js','./reference-tone.js','./phrase-practice.js','./pitch-core.js','./pitch-worker.js','./manifest.webmanifest','./icon-180.png','./icon-512.png'];
+const CACHE = 'vocal-scope-v3-20261002-practice-recording';
+const ASSETS = ['./','./index.html','./styles.css','./history.css','./app.js','./history.js','./history-share.js','./vocal-scope-patch.js','./reference-tone.js','./phrase-practice.js','./recording.js','./pitch-core.js','./pitch-worker.js','./manifest.webmanifest','./icon-180.png','./icon-512.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
