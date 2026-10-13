@@ -103,6 +103,8 @@
   }
 
   function practiceLabel() {
+    const training = window.VocalJudgementPractice?.getSessionContext?.();
+    if (training) return window.VocalJudgementCore.label(training, training.targetMidi);
     const phrase = window.VocalPhrasePractice?.getPlanSnapshot?.();
     if (phrase?.label) return phrase.label;
     const interval = window.VocalTrainer?.getPlanSnapshot?.();

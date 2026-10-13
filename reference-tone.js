@@ -4,6 +4,10 @@
   let toneContext = null;
   let playingUntil = 0;
   let activeNodes = [];
+  let continuous = false;
+  let allowPitchDuringTone = false;
+  let toneToken = 0;
+  let buttonTimer = null;
 
   function ensureStyles() {
     if (document.getElementById('referenceToneStyles')) return;
@@ -63,11 +67,18 @@
   }
 
   function stopActiveTone() {
+    toneToken += 1;
+    clearTimeout(buttonTimer);
     for (const node of activeNodes) {
       try { node.stop?.(); } catch (_) {}
       try { node.disconnect?.(); } catch (_) {}
     }
     activeNodes = [];
+    playingUntil = 0;
+    continuous = false;
+    allowPitchDuringTone = false;
+    const button = document.getElementById('referenceToneBtn');
+    if (button) { button.textContent = button.dataset.idleText || '🔊 기준음 듣기'; button.disabled = !Number.isFinite(state?.targetMidi); }
   }
 
   function midiFrequency(midi) {
@@ -80,8 +91,10 @@
       return;
     }
 
-    const ctx = await ensureAudioContext();
     stopActiveTone();
+    const token = toneToken;
+    const ctx = await ensureAudioContext();
+    if (token !== toneToken) return;
 
     const f0 = midiFrequency(midi);
     const now = ctx.currentTime + 0.015;
@@ -129,12 +142,43 @@
       button.dataset.idleText = old;
       button.textContent = '🔊 재생 중…';
       button.disabled = true;
-      setTimeout(() => {
+      buttonTimer = setTimeout(() => {
+        if (token !== toneToken) return;
         button.textContent = old;
         button.disabled = !Number.isFinite(state?.targetMidi);
         setStatus('재생 완료');
       }, durationMs + 120);
     }
+  }
+
+  async function startContinuous(midi, { allowPitch = false } = {}) {
+    if (!Number.isFinite(midi)) throw new Error('목표음을 먼저 선택해 주세요.');
+    stopActiveTone();
+    const token = toneToken;
+    const ctx = await ensureAudioContext();
+    if (token !== toneToken) return;
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.22, now + 0.04);
+    master.connect(ctx.destination);
+    const nodes = [master];
+    for (const [multiple, amplitude] of [[1, 0.78], [2, 0.32], [3, 0.18], [4, 0.10]]) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(midiFrequency(midi) * multiple, now);
+      gain.gain.setValueAtTime(amplitude, now);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(now);
+      nodes.push(osc, gain);
+    }
+    activeNodes = nodes;
+    continuous = true;
+    allowPitchDuringTone = allowPitch;
+    playingUntil = Infinity;
+    setStatus(`${window.VocalScope.noteFromMidi(midi).name} 지속 재생 중`);
   }
 
   function refreshButton() {
@@ -197,7 +241,7 @@
   if (typeof onPitchResult === 'function') {
     const originalPitchResult = onPitchResult;
     onPitchResult = function(result) {
-      if (performance.now() < playingUntil) {
+      if (!allowPitchDuringTone && performance.now() < playingUntil) {
         state.workerBusy = false;
         return;
       }
@@ -218,9 +262,15 @@
   window.VocalScopeReferenceTone = {
     play: playMidi,
     stop: stopActiveTone,
+    startContinuous,
     get contextState() { return toneContext?.state || 'not-created'; },
-    get isPlaying() { return performance.now() < playingUntil; }
+    get isPlaying() { return performance.now() < playingUntil; },
+    get isContinuous() { return continuous; }
   };
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopActiveTone(); });
+  window.addEventListener('pagehide', stopActiveTone);
+  window.addEventListener('vs:measurement-start', () => { if (continuous && !allowPitchDuringTone) stopActiveTone(); });
 
   document.addEventListener('DOMContentLoaded', () => {
     installUi();

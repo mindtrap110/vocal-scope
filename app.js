@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.3.0';
-const BUILD_ID = '2026-10-02-practice-recording';
+const APP_VERSION = '3.4.0';
+const BUILD_ID = '2026-10-12-judgement-training';
 
 const state = {
   measuring: false,
@@ -42,6 +42,9 @@ const state = {
   captureStartedAt: null,
   usedFallbackConstraints: false,
   lastError: null,
+  errorWindow: [],
+  errorOnset: null,
+  errorLastPitch: null,
 };
 
 function emit(name, detail={}) {
@@ -90,6 +93,9 @@ function setTarget(midi, options={}) {
   state.targetStreakMs = 0;
   state.targetVoicedMs = 0;
   state.lastTargetTick = null;
+  state.errorWindow = [];
+  state.errorOnset = null;
+  state.errorLastPitch = null;
   if (state.targetMidi == null) {
     $('targetBtn').textContent = '자유 측정';
     $('targetPanel').classList.add('hidden');
@@ -207,6 +213,12 @@ function updateTargetPanel(midi, now) {
       state.targetStreakMs += dt;
     } else state.targetStreakMs = 0;
     state.lastTargetTick = now;
+    if (state.errorLastPitch == null || now - state.errorLastPitch > 360) {
+      state.errorOnset = now;
+      state.errorWindow = [];
+    }
+    if (now - state.errorOnset <= 2500 || (state.errorWindow.at(-1)?.t ?? 0) <= 2500) state.errorWindow.push({ t: now - state.errorOnset, m: midi });
+    state.errorLastPitch = now;
   } else {
     state.targetStreakMs = 0;
     state.lastTargetTick = null;
@@ -215,7 +227,14 @@ function updateTargetPanel(midi, now) {
   $('targetAccuracy').textContent = `${Math.round(accuracy)}%`;
   $('holdTime').textContent = `${(state.targetExactMs/1000).toFixed(1)}초`;
   $('streakTime').textContent = `${(state.targetStreakMs/1000).toFixed(1)}초`;
-  $('targetCent').textContent = targetCents == null ? '—' : `${formatSigned(targetCents,0)} cent`;
+  const metric = window.VocalJudgementCore?.windowMedian(state.errorWindow, state.targetMidi);
+  const measured = metric?.medianCents ?? (metric?.complete ? null : metric?.observedMedianCents);
+  const text = Number.isFinite(measured) ? `${formatSigned(measured)} cent${metric?.status === 'ok' ? '' : ' · 집계 중'}` : metric?.complete ? '구간 부족' : '0.5~2.5초 집계 중';
+  $('targetCent').textContent = window.VocalJudgementPractice?.isPitchHidden?.() ? '판단 후 공개' : text;
+  if (!window.VocalJudgementPractice?.isPitchHidden?.()) {
+    $('centMetricLabel').textContent = '목표 오차 · 중앙값';
+    $('centValue').textContent = text;
+  }
 }
 
 function pushHistory(midi, now) {
@@ -233,14 +252,31 @@ function calculateStability(currentMidi, now) {
   return Math.round(clamp(100 - stddev(values)*3.2, 0, 100));
 }
 function updatePitchUI(midi, frequency, confidence, now) {
+  if (window.VocalJudgementPractice?.isPitchHidden?.()) {
+    updateTargetPanel(midi, now);
+    return;
+  }
   const n = noteFromMidi(midi);
-  const cents = (midi - n.midi)*100;
+  let cents = (midi - n.midi)*100;
   const stability = calculateStability(midi, now);
   $('noteName').textContent = n.name;
   $('noteKorean').textContent = n.korean;
   $('frequencyValue').textContent = `${frequency.toFixed(1)} Hz`;
-  $('centValue').textContent = `${formatSigned(cents,0)} cent`;
+  $('centMetricLabel').textContent = state.targetMidi == null ? '편차 · 실시간' : '목표 오차 · 중앙값';
+  if (state.targetMidi == null) $('centValue').textContent = `${formatSigned(cents,0)} cent`;
   $('stabilityValue').textContent = stability == null ? '측정 중' : `${stability}%`;
+  updateTargetPanel(midi, now);
+  if (state.targetMidi != null) {
+    const metric = window.VocalJudgementCore.windowMedian(state.errorWindow, state.targetMidi);
+    if (metric.status !== 'ok') {
+      $('centNeedle').style.left = '50%';
+      $('centHint').textContent = metric.complete ? '이 발성의 0.5~2.5초 구간이 부족합니다.' : '0.5~2.5초 구간을 집계합니다. 미터는 확정 후 표시됩니다.';
+      setQuality('구간 집계 중', 'waiting');
+      state.lastGood = { midi, frequency, confidence, now };
+      return;
+    }
+    cents = metric.medianCents;
+  }
   $('centNeedle').style.left = `${clamp(cents+50,0,100)}%`;
   if (Math.abs(cents) <= 15) {
     setQuality('정확한 구간','good');
@@ -252,7 +288,6 @@ function updatePitchUI(midi, frequency, confidence, now) {
     setQuality('조금 높음','warn');
     $('centHint').textContent = `${Math.abs(Math.round(cents))} cent 높습니다.`;
   }
-  updateTargetPanel(midi, now);
   state.lastGood = { midi, frequency, confidence, now };
 }
 function clearPitchUI(reason='신호 대기') {
@@ -370,6 +405,9 @@ async function startMeasurement() {
     };
     state.measuring = true;
     state.captureStartedAt = Date.now();
+    state.errorWindow = []; state.errorOnset = null; state.errorLastPitch = null;
+    state.smoothedMidi = null; state.recentRawMidi = []; state.pitchWindow = [];
+    state.octaveCandidate = null; state.octaveCandidateCount = 0; state.lastGood = null;
     state.workerBusy = false;
     state.noiseFloor = -72;
     state.gateDb = -64;
@@ -422,6 +460,7 @@ function cleanupAudio(markStopped=true) {
   if (markStopped) state.measuring=false;
 }
 function resetSession() {
+  state.errorWindow=[];state.errorOnset=null;state.errorLastPitch=null;
   state.history=[]; state.frozenHistory=[]; state.frozen=false; state.recentRawMidi=[]; state.pitchWindow=[]; state.smoothedMidi=null;
   state.targetExactMs=0; state.targetStreakMs=0; state.targetVoicedMs=0; state.lastTargetTick=null; state.lastGood=null;
   $('freezeBtn').textContent='고정'; $('freezeBtn').classList.remove('active');
@@ -465,6 +504,11 @@ function resizeCanvas() {
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;} drawGraph();
 }
 function drawGraph() {
+  if (window.VocalJudgementPractice?.isPitchHidden?.()) {
+    const canvas = $('pitchCanvas');
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
   const canvas=$('pitchCanvas'); if(!canvas)return;
   const ctx=canvas.getContext('2d'); if(!ctx||!canvas.width||!canvas.height)return;
   const dpr=Math.min(window.devicePixelRatio||1,3), W=canvas.width/dpr,H=canvas.height/dpr;
@@ -538,5 +582,6 @@ document.addEventListener('DOMContentLoaded',init);
 window.VocalScope={
   APP_VERSION,BUILD_ID,state,noteFromMidi,midiToFrequency,setTarget,startMeasurement,stopMeasurement,playReferenceTone,showError,requestWakeLock,recoverForeground,
   getCurrentStream:()=>state.stream,
+  clearDisplayedPitch:()=>{state.history=[];state.frozenHistory=[];state.smoothedMidi=null;state.recentRawMidi=[];state.errorWindow=[];state.errorOnset=null;state.errorLastPitch=null;clearPitchUI();drawGraph();},
   getDiagnostics:()=>({version:APP_VERSION,build:BUILD_ID,measuring:state.measuring,targetMidi:state.targetMidi,noiseFloor:state.noiseFloor,gateDb:state.gateDb,audioContextState:state.audioContext?.state||'none',trackState:state.stream?.getAudioTracks?.()[0]?.readyState||'none',fallbackConstraints:state.usedFallbackConstraints,lastError:state.lastError})
 };

@@ -30,6 +30,64 @@
       <span id="inputStatus" class="muted">마이크 미사용</span>
     </section>
 
+    <section id="judgementCard" class="judgement-card card">
+      <div class="section-heading">
+        <div><span class="section-kicker">JUDGE FIRST</span><h2>판단 보정 훈련</h2></div>
+        <span id="judgementBadge" class="phrase-mode-badge">준비</span>
+      </div>
+      <p class="judgement-intro">M1 → 12회 × 2블록. ②와 재시도는 음정을 숨기고, 방향·크기·확신도를 입력한 뒤 결과를 공개합니다.</p>
+      <form id="judgementSetup" class="judgement-setup">
+        <div class="judgement-fields">
+          <label>연습 날짜<input id="judgementDate" type="date" required /></label>
+          <label>첫 블록<select id="judgementFirstBlock"><option value="beats">맥놀이 → 화면</option><option value="screen">화면 → 맥놀이</option></select></label>
+          <label>피드백 단계<select id="judgementFeedback"><option value="all">매 회차 확인</option><option value="even">짝수 회차만 확인</option><option value="third">3회에 1회 확인</option></select></label>
+        </div>
+        <label class="judgement-wide-field">M1 목표음 순서 · 8개<input id="judgementM1Order" type="text" spellcheck="false" required /></label>
+        <label class="judgement-wide-field">A 목표음 순서 · 앞 12개 / 뒤 12개<textarea id="judgementAOrder" rows="3" spellcheck="false" required></textarea></label>
+        <p class="judgement-note">순서는 직접 바꿀 수 있습니다. 피드백 단계는 훈련 계획의 전환 기준을 만족한 뒤 바꾸세요.</p>
+        <label class="judgement-wide-field">연습 전 목 상태<input id="judgementThroatBefore" type="text" maxlength="160" placeholder="예: 평소와 같음" /></label>
+        <p id="judgementSetupError" class="judgement-error" role="alert"></p>
+        <div class="judgement-actions"><button id="judgementShuffleBtn" class="secondary-btn" type="button">순서 다시 섞기</button><button class="primary-btn" type="submit">훈련 시작</button></div>
+      </form>
+      <div id="judgementResume" class="hidden">
+        <p id="judgementResumeText" class="judgement-note"></p>
+        <button id="judgementResumeBtn" type="button" class="primary-btn">저장된 훈련 이어서</button>
+      </div>
+      <div id="judgementActive" class="hidden">
+        <p id="judgementLabel" class="judgement-label"></p>
+        <div class="judgement-target-row"><strong id="judgementTarget">—</strong><span id="judgementProgress"></span></div>
+        <p id="judgementInstruction" class="judgement-instruction" aria-live="polite"></p>
+        <div id="judgementCountdown" class="judgement-countdown" aria-live="polite"></div>
+        <div id="judgementPitchLock" class="judgement-pitch-lock">음정·그래프·기록 결과 숨김</div>
+        <p id="judgementCorrectionLive" class="judgement-live hidden"></p>
+        <div id="judgementToneControls" class="judgement-actions">
+          <button id="judgementToneOnceBtn" type="button" class="secondary-btn">기준음 1회 듣기</button>
+          <button id="judgementToneToggleBtn" type="button" class="secondary-btn">지속 기준음 켜기</button>
+        </div>
+        <p id="judgementToneStatus" class="judgement-note" aria-live="polite">기준음 꺼짐</p>
+        <button id="judgementCaptureBtn" type="button" class="primary-btn judgement-full-btn">① 기준음 → ② 3초 발성</button>
+        <form id="judgementAnswerForm" class="hidden judgement-answer">
+          <p class="judgement-note">방금 부른 음을 먼저 판단하세요. 세 항목을 모두 고르면 저장할 수 있습니다.</p>
+          <div class="judgement-fields">
+            <label>방향<select id="judgementDirection" required><option value="">선택</option><option value="high">높음</option><option value="match">맞음</option><option value="low">낮음</option></select></label>
+            <label>크기<select id="judgementSize" required><option value="">선택</option><option value="sub-semitone">반음 미만</option><option value="semitone-tone">반음~온음</option><option value="larger">그 이상</option><option value="octave">옥타브</option></select></label>
+            <label>확신도<select id="judgementConfidence" required><option value="">선택</option><option value="1">1 · 찍음</option><option value="2">2 · 애매</option><option value="3">3 · 확실</option></select></label>
+          </div>
+          <button type="submit" class="primary-btn judgement-full-btn">판단 저장 → 결과 공개</button>
+        </form>
+        <div id="judgementResult" class="judgement-result hidden" aria-live="polite"></div>
+        <div id="judgementBeatField" class="hidden">
+          <label class="judgement-wide-field">겹쳐 부르기 시작할 때 울렁임이 들렸나요?<select id="judgementBeatDetected"><option value="">Y / N 선택</option><option value="Y">Y · 들림</option><option value="N">N · 안 들림</option></select></label>
+        </div>
+        <p id="judgementActionError" class="judgement-error" role="alert"></p>
+        <button id="judgementNextBtn" type="button" class="primary-btn judgement-full-btn hidden">다음</button>
+        <button id="judgementRepeatBtn" type="button" class="secondary-btn judgement-full-btn hidden">같은 단계 다시 측정</button>
+        <div id="judgementReport" class="judgement-report hidden"></div>
+        <label id="judgementThroatAfterField" class="judgement-wide-field hidden">연습 후 목 상태<input id="judgementThroatAfter" type="text" maxlength="160" placeholder="예: 평소와 같음" /></label>
+        <button id="judgementPauseBtn" type="button" class="ghost-btn judgement-full-btn">잠시 중단 · 진행 저장</button>
+      </div>
+    </section>
+
     <section class="hero card">
       <div class="mode-row">
         <button id="targetBtn" class="pill">자유 측정</button>
@@ -43,7 +101,7 @@
 
       <div class="metric-grid">
         <div class="metric"><span class="metric-label">주파수</span><strong id="frequencyValue">— Hz</strong></div>
-        <div class="metric"><span class="metric-label">편차</span><strong id="centValue">— cent</strong></div>
+        <div class="metric"><span id="centMetricLabel" class="metric-label">편차</span><strong id="centValue">— cent</strong></div>
         <div class="metric"><span class="metric-label">안정도</span><strong id="stabilityValue">—</strong></div>
       </div>
 
@@ -65,7 +123,7 @@
       <div class="target-stats">
         <div><span>정확 유지</span><strong id="holdTime">0.0초</strong></div>
         <div><span>현재 연속</span><strong id="streakTime">0.0초</strong></div>
-        <div><span>목표 편차</span><strong id="targetCent">—</strong></div>
+        <div><span>오차 · 0.5~2.5초 중앙값</span><strong id="targetCent">—</strong></div>
       </div>
     </section>
 
@@ -279,6 +337,7 @@
         <button value="cancel" class="icon-btn" aria-label="닫기">×</button>
       </div>
 
+      <div id="sessionJudgementPanel" class="session-judgement-panel hidden"></div>
       <div class="technique-title-row">
         <div><span class="section-kicker">PITCH CONTROL</span><h3>음정 제어 분석</h3></div>
         <span id="sessionTechniqueCount" class="technique-count">—</span>
@@ -356,6 +415,7 @@
   </dialog>
 
   <script src="./pitch-core.js"></script>
+  <script src="./judgement-core.js"></script>
   <script src="./app.js" defer></script>
   <script src="./history.js" defer></script>
   <script src="./history-share.js" defer></script>
@@ -363,5 +423,6 @@
   <script src="./reference-tone.js" defer></script>
   <script src="./phrase-practice.js" defer></script>
   <script src="./recording.js" defer></script>
+  <script src="./judgement-practice.js" defer></script>
 </body>
 </html>
