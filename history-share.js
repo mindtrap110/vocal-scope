@@ -26,7 +26,7 @@
   }
 
   function publicRecords(records) {
-    return (Array.isArray(records) ? records : []).filter(s => !H()?.isLocked?.(s));
+    return Array.isArray(records) ? records : [];
   }
 
   function noteName(midi) {
@@ -111,11 +111,11 @@
     if (mode === '판단 보정') {
       const t = session.training, j = t.judgement;
       lines.push(`   라벨: ${window.VocalJudgementCore.label(t, session.targetMidi)}`);
-      if (j) lines.push(`   [사용자] 판단: ${{high:'높음',match:'맞음',low:'낮음'}[j.direction]} · ${{'sub-semitone':'반음 미만','semitone-tone':'반음~온음',larger:'그 이상',octave:'옥타브'}[j.size]} · 확신도 ${j.confidence}`);
+      if (j) lines.push(`   [사용자] 판단: ${{high:'높음',match:'맞음',low:'낮음'}[j.direction]} · ${{lt_semitone:'반음 미만',semitone_to_tone:'반음~온음',more:'그 이상',octave:'옥타브','sub-semitone':'반음 미만','semitone-tone':'반음~온음',larger:'그 이상'}[j.size] || '해당 없음'} · 확신도 ${j.confidence}`);
       const metric = session.assessment;
       lines.push(`   [측정] 0.5~2.5초 오차 중앙값: ${metric?.status === 'ok' ? signed(metric.medianCents) : `유효 결과 없음 (${metric?.status || '미측정'})`}`);
-      if (t.block === 'beats') lines.push(`   [사용자] 겹침 시작 울렁임 Y/N: ${t.beatDetected || (t.correctionStarted || t.stage === 'correction' ? '미입력' : '해당 없음 (겹침 교정 없음)')}`);
-      lines.push(`   피드백 단계: ${t.feedbackMode} · 화면 공개: ${t.feedbackVisible ? '예' : '아니오'}${t.excluded ? ' · 재측정으로 통계 제외' : ''}`);
+      if (t.method === 'beat' || t.block === 'beats') lines.push(`   [사용자] 겹침 시작 울렁임 Y/N: ${typeof t.beatHeard === 'boolean' ? (t.beatHeard ? 'Y' : 'N') : t.beatDetected || (t.correctionStarted || t.stage === 'correction' ? '미입력' : '해당 없음 (겹침 교정 없음)')}`);
+      lines.push(`   피드백 단계: ${t.feedbackLevel ?? t.feedbackMode} · 화면 공개: ${(t.feedbackVisible ?? window.VocalJudgementCore.shouldShowFeedback(t.feedbackLevel,t.trial)) ? '예' : '아니오'}${t.excluded ? ' · 재측정으로 통계 제외' : ''}`);
       if (t.throatBefore || t.throatAfter) lines.push(`   [사용자] 목 상태: 전 ${t.throatBefore || '미입력'} / 후 ${t.throatAfter || '미입력'}`);
       lines.push(`   ${commonLine(session)}`);
       return lines;
@@ -182,7 +182,7 @@
       '',
       '아래 기록을 보컬 코치처럼 분석해 주세요.',
       '- 반복되는 강점과 문제 경향을 구분해 주세요.',
-      hasJudgements ? '- 판단 보정 계획의 구조를 유지하며 M1 판단 정확도·‘맞음’ 정밀도·확신도별 정확도와 맥놀이/화면 재시도를 비교해 주세요.' : '- 가장 먼저 교정할 항목 1~2개와 구체적인 연습법을 제안해 주세요.',
+      hasJudgements ? '- 판단 보정 계획의 구조를 유지하며 블록별 판단 정확도·‘맞음’ 정밀도·확신도별 정확도와 맥놀이/화면 재시도를 비교해 주세요.' : '- 가장 먼저 교정할 항목 1~2개와 구체적인 연습법을 제안해 주세요.',
       hasJudgements ? '- 교정 전 오차의 분포와 맥놀이 Y/N을 함께 보고, 재시도 ±25 cent 성공률을 비교해 주세요.' : '- 다음 연습에서 확인할 수치와 10분 루틴을 만들어 주세요.',
       '- 데이터가 부족한 결론은 추정이라고 표시해 주세요.',
       '',
@@ -239,12 +239,12 @@
         driftCentsPerSec: '발성을 유지하는 동안 초당 음정 변화',
         assessment: '첫 유효 음정 검출을 기준으로 500~2500ms의 목표음 대비 부호 있는 오차 중앙값. status=ok만 유효. 짧거나 끊긴 구간은 medianCents=null',
         training: '연습 날짜·dayId·블록·회차·단계(initial=②/correction=교정/retry=재시도)·사용자 판단(방향/크기/확신도)·맥놀이 Y/N·피드백 단계·연결 세션 ID',
-        correctionWarning: '교정은 2초이며 기준음+목소리 혼합 입력. correction-only는 성과 평가에서 제외하고 기준음을 끈 재시도로 비교',
-        judgementRule: '실제 |오차|≤25c는 match. 그 밖에는 high/low 방향이 맞아야 정답. 판단을 입력하지 않은 기록은 내보내기에서 제외',
+        correctionWarning: 'training.stage=correction은 성과 평가 제외. beat 교정은 마이크 꺼짐과 빈 points, screen 교정은 mixedWithReference=true인 음정 데이터. 기준음을 끈 retry로 비교',
+        judgementRule: '실제 |오차|≤25c는 match. 그 밖에는 high/low 방향이 맞아야 정답. 판단은 initial에만 저장. correction/retry/discarded도 내보내기에 포함',
         phraseWarning: 'plan.type이 phrase인 기록은 기준 멜로디가 없으므로 멜로디 정확도로 평가하지 않음',
       },
       suggestedAnalysis: records.some(s => s.training)
-        ? '판단 보정 계획의 구조를 유지하며 M1 및 블록별 판단 정확도·맞음 정밀도·확신도별 정확도를 분석하세요. 교정 전 오차와 맥놀이 Y/N을 고려해 두 블록의 재시도 절대 오차 중앙값·±25 cent 성공률을 비교하고, 측정/사용자 보고/추정을 구분하세요.'
+        ? '판단 보정 계획의 구조를 유지하며 블록별 판단 정확도·맞음 정밀도·확신도별 정확도를 분석하세요. 교정 전 오차와 맥놀이 Y/N을 고려해 두 블록의 재시도 절대 오차 중앙값·±25 cent 성공률을 비교하고, 측정/사용자 보고/추정을 구분하세요.'
         : '반복되는 강점과 문제 경향을 찾고, 교정 우선순위 1~2개와 다음 10분 연습 루틴을 제안해 주세요. 근거가 부족한 결론은 추정이라고 표시해 주세요.',
       recordCount: records.length,
       sessions: records,
@@ -456,6 +456,14 @@
     $('shareHistoryDialog')?.showModal();
   }
 
+  async function exportTrainingDay(date) {
+    try {
+      const payload = window.VocalJudgementCore.exportDay(H().readSessions(), date);
+      if (!payload.sessions.length) return showToast('이 날짜에 저장된 훈련 기록이 없습니다.');
+      await shareOrDownloadFile({content:JSON.stringify(payload,null,2),filename:`vocal-scope-training-${date}.json`,type:'application/json'});
+    } catch(error) { if(error?.name!=='AbortError')showToast(error.message || '내보내지 못했습니다.'); }
+  }
+
   function mount() {
     $('historyShareBtn')?.addEventListener('click', openShareDialog);
     $('shareAllHistoryBtn')?.addEventListener('click', openShareDialog);
@@ -472,5 +480,6 @@
     buildDetailedText,
     shareSession,
     openShareDialog,
+    exportTrainingDay,
   };
 })();

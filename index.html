@@ -30,62 +30,45 @@
       <span id="inputStatus" class="muted">마이크 미사용</span>
     </section>
 
-    <section id="judgementCard" class="judgement-card card">
-      <div class="section-heading">
-        <div><span class="section-kicker">JUDGE FIRST</span><h2>판단 보정 훈련</h2></div>
-        <span id="judgementBadge" class="phrase-mode-badge">준비</span>
+    <section id="recordingCard" class="recording-card judgement-card card">
+      <div class="section-heading recording-heading">
+        <div><span class="section-kicker">AUDIO RECORDING</span><h2>연습 녹음</h2></div>
+        <span id="judgementBadge" class="phrase-mode-badge">설정</span>
       </div>
-      <p class="judgement-intro">M1 → 12회 × 2블록. ②와 재시도는 음정을 숨기고, 방향·크기·확신도를 입력한 뒤 결과를 공개합니다.</p>
       <form id="judgementSetup" class="judgement-setup">
         <div class="judgement-fields">
           <label>연습 날짜<input id="judgementDate" type="date" required /></label>
-          <label>첫 블록<select id="judgementFirstBlock"><option value="beats">맥놀이 → 화면</option><option value="screen">화면 → 맥놀이</option></select></label>
-          <label>피드백 단계<select id="judgementFeedback"><option value="all">매 회차 확인</option><option value="even">짝수 회차만 확인</option><option value="third">3회에 1회 확인</option></select></label>
+          <label>피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
         </div>
-        <label class="judgement-wide-field">M1 목표음 순서 · 8개<input id="judgementM1Order" type="text" spellcheck="false" required /></label>
-        <label class="judgement-wide-field">A 목표음 순서 · 앞 12개 / 뒤 12개<textarea id="judgementAOrder" rows="3" spellcheck="false" required></textarea></label>
-        <p class="judgement-note">순서는 직접 바꿀 수 있습니다. 피드백 단계는 훈련 계획의 전환 기준을 만족한 뒤 바꾸세요.</p>
-        <label class="judgement-wide-field">연습 전 목 상태<input id="judgementThroatBefore" type="text" maxlength="160" placeholder="예: 평소와 같음" /></label>
-        <p id="judgementSetupError" class="judgement-error" role="alert"></p>
-        <div class="judgement-actions"><button id="judgementShuffleBtn" class="secondary-btn" type="button">순서 다시 섞기</button><button class="primary-btn" type="submit">훈련 시작</button></div>
+        <p id="judgementBlockOrder" class="judgement-note"></p>
+        <label class="judgement-wide-field">오늘 목표음 24개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="F3 B2 A2 A2 E3 B2 D#3 C#3 A#2 C3 A2 D3 / C3 D3 C3 G3 C#3 D3 E3 E3 A#2 D#3 B2 D#3"></textarea></label>
+        <p class="judgement-note">아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.</p>
       </form>
-      <div id="judgementResume" class="hidden">
-        <p id="judgementResumeText" class="judgement-note"></p>
-        <button id="judgementResumeBtn" type="button" class="primary-btn">저장된 훈련 이어서</button>
-      </div>
       <div id="judgementActive" class="hidden">
         <p id="judgementLabel" class="judgement-label"></p>
         <div class="judgement-target-row"><strong id="judgementTarget">—</strong><span id="judgementProgress"></span></div>
         <p id="judgementInstruction" class="judgement-instruction" aria-live="polite"></p>
-        <div id="judgementCountdown" class="judgement-countdown" aria-live="polite"></div>
-        <div id="judgementPitchLock" class="judgement-pitch-lock">음정·그래프·기록 결과 숨김</div>
+        <div id="judgementCountdown" class="judgement-countdown"></div>
+        <div id="judgementPitchLock" class="judgement-pitch-lock">음정·그래프 숨김</div>
         <p id="judgementCorrectionLive" class="judgement-live hidden"></p>
-        <div id="judgementToneControls" class="judgement-actions">
-          <button id="judgementToneOnceBtn" type="button" class="secondary-btn">기준음 1회 듣기</button>
-          <button id="judgementToneToggleBtn" type="button" class="secondary-btn">지속 기준음 켜기</button>
-        </div>
-        <p id="judgementToneStatus" class="judgement-note" aria-live="polite">기준음 꺼짐</p>
-        <button id="judgementCaptureBtn" type="button" class="primary-btn judgement-full-btn">① 기준음 → ② 3초 발성</button>
         <form id="judgementAnswerForm" class="hidden judgement-answer">
-          <p class="judgement-note">방금 부른 음을 먼저 판단하세요. 세 항목을 모두 고르면 저장할 수 있습니다.</p>
           <div class="judgement-fields">
             <label>방향<select id="judgementDirection" required><option value="">선택</option><option value="high">높음</option><option value="match">맞음</option><option value="low">낮음</option></select></label>
-            <label>크기<select id="judgementSize" required><option value="">선택</option><option value="sub-semitone">반음 미만</option><option value="semitone-tone">반음~온음</option><option value="larger">그 이상</option><option value="octave">옥타브</option></select></label>
+            <label>크기<select id="judgementSize" required><option value="">선택</option><option value="lt_semitone">반음 미만</option><option value="semitone_to_tone">반음~온음</option><option value="more">그 이상</option><option value="octave">옥타브</option></select></label>
             <label>확신도<select id="judgementConfidence" required><option value="">선택</option><option value="1">1 · 찍음</option><option value="2">2 · 애매</option><option value="3">3 · 확실</option></select></label>
           </div>
-          <button type="submit" class="primary-btn judgement-full-btn">판단 저장 → 결과 공개</button>
         </form>
         <div id="judgementResult" class="judgement-result hidden" aria-live="polite"></div>
-        <div id="judgementBeatField" class="hidden">
-          <label class="judgement-wide-field">겹쳐 부르기 시작할 때 울렁임이 들렸나요?<select id="judgementBeatDetected"><option value="">Y / N 선택</option><option value="Y">Y · 들림</option><option value="N">N · 안 들림</option></select></label>
-        </div>
-        <p id="judgementActionError" class="judgement-error" role="alert"></p>
-        <button id="judgementNextBtn" type="button" class="primary-btn judgement-full-btn hidden">다음</button>
-        <button id="judgementRepeatBtn" type="button" class="secondary-btn judgement-full-btn hidden">같은 단계 다시 측정</button>
-        <div id="judgementReport" class="judgement-report hidden"></div>
-        <label id="judgementThroatAfterField" class="judgement-wide-field hidden">연습 후 목 상태<input id="judgementThroatAfter" type="text" maxlength="160" placeholder="예: 평소와 같음" /></label>
-        <button id="judgementPauseBtn" type="button" class="ghost-btn judgement-full-btn">잠시 중단 · 진행 저장</button>
+        <label id="judgementBeatField" class="judgement-wide-field hidden">겹치기 시작할 때 울렁임이 들렸나?<select id="judgementBeatDetected"><option value="">Y / N 선택</option><option value="Y">Y · 들림</option><option value="N">N · 안 들림</option></select></label>
       </div>
+      <p id="judgementActionError" class="judgement-error" role="alert"></p>
+      <p id="recordingStatus" class="recording-status"></p>
+      <div class="recording-footer"><span id="recordingStorageSummary"></span><button id="recordingLibraryBtn" class="ghost-btn" type="button">녹음 목록</button></div>
+      <div class="judgement-fields recording-export">
+        <label>내보낼 연습 날짜<input id="trainingExportDate" type="date" /></label>
+        <button id="trainingExportBtn" class="secondary-btn" type="button">하루 JSON 내보내기</button>
+      </div>
+      <p class="recording-storage-note">음성과 기록은 이 기기에 저장됩니다. 중요한 파일은 별도로 보관하세요.</p>
     </section>
 
     <section class="hero card">
@@ -183,23 +166,6 @@
       <p id="historyEmpty" class="history-empty">목표음을 선택해 2~3초씩 유지해 보세요. 측정을 끝내면 초기 착지·유지 구간·드리프트와 전체 그래프가 이곳에 남습니다.</p>
     </section>
 
-    <section class="recording-card card">
-      <div class="section-heading recording-heading">
-        <div><span class="section-kicker">AUDIO RECORDING</span><h2>연습 녹음</h2></div>
-        <label class="recording-toggle-control">
-          <input id="recordingEnabledToggle" type="checkbox" />
-          <span class="recording-toggle-track" aria-hidden="true"><i></i></span>
-          <strong id="recordingToggleLabel">꺼짐</strong>
-        </label>
-      </div>
-      <p id="recordingStatus" class="recording-status">필요할 때 켜면 다음 측정부터 녹음합니다.</p>
-      <div class="recording-footer">
-        <span id="recordingStorageSummary">저장된 녹음 확인 중…</span>
-        <button id="recordingLibraryBtn" class="ghost-btn" type="button">녹음 목록</button>
-      </div>
-      <p class="recording-storage-note">녹음은 이 기기에만 저장됩니다. 다른 앱으로 이동하면 현재 측정을 끝내고 녹음을 저장합니다. 중요한 파일은 ‘공유’ 또는 ‘파일 저장’으로 별도 보관하세요.</p>
-    </section>
-
     <section class="signal-card card">
       <div class="section-heading compact"><h2>입력 상태</h2><span id="confidenceText" class="muted">신뢰도 —</span></div>
       <div class="level-row"><span>마이크</span><div class="level-track"><div id="levelBar" class="level-fill"></div></div></div>
@@ -212,8 +178,8 @@
     </section>
 
     <div class="sticky-actions">
-      <button id="measureBtn" class="primary-btn">마이크로 측정 시작</button>
-      <button id="resetBtn" class="secondary-btn">현재 기록 지우기</button>
+      <button id="measureBtn" class="primary-btn">기준음 듣기 · 녹음 준비</button>
+      <button id="resetBtn" class="secondary-btn hidden">현재 기록 지우기</button>
     </div>
   </main>
 
@@ -398,7 +364,7 @@
         <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
         <li>‘가사 구절 연습’에서는 짧은 가사를 저장해 화면에 띄운 채 여러 테이크를 부를 수 있습니다. 정답 멜로디를 판정하는 모드는 아니며, 각 테이크의 실제 음정 흐름과 음역을 비교하는 용도입니다.</li>
         <li>‘연습 기록’의 공유 버튼에서는 ChatGPT가 읽기 좋은 요약을 공유·복사하거나, 모든 음정 좌표가 든 JSON 파일을 내보낼 수 있습니다.</li>
-        <li>‘연습 녹음’을 켜면 측정과 동시에 음성을 녹음해 기기에 저장합니다. 기록 상세 화면에서 재생하거나 파일로 저장·공유할 수 있습니다. 녹음 중 다른 앱으로 이동하면 파일 보호를 위해 현재 측정을 종료합니다.</li>
+        <li>‘연습 녹음’에 날짜와 목표음 24개를 붙여 넣고 기존 녹음 버튼으로 진행합니다. ②에만 판단을 입력하며, 교정·재시도에는 입력하지 않습니다. 하루 JSON에는 실패한 시도를 포함한 모든 단계를 저장합니다.</li>
       </ol>
       <div class="help-callout">착지가 정확한데 유지 구간이 낮아지고 드리프트가 음수라면 ‘처음 음을 못 찾는 문제’가 아니라 ‘맞춘 뒤 내려가는 문제’로 볼 수 있습니다. 소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요.</div>
     </form>

@@ -202,8 +202,12 @@ canvas { width:100%; height:100%; display:block; }
 .judgement-report table { border-collapse:collapse; width:100%; font-size:11px; line-height:1.5; }
 .judgement-report th, .judgement-report td { border:1px solid var(--line); padding:9px; text-align:left; min-width:70px; }
 .judgement-report th { color:var(--accent2); }
-body.judgement-active .app-shell > section:not(.status-row):not(#judgementCard),
-body.judgement-active .sticky-actions, body.judgement-active #intervalTrainer { display:none !important; }
+body.judgement-active .app-shell > section:not(.status-row):not(#recordingCard):not(.graph-card),
+body.judgement-active #intervalTrainer { display:none !important; }
+body.judgement-active:not(.judgement-screen-correction) .graph-card { display:none !important; }
+.sticky-actions { grid-template-columns:1fr; }
+.recording-export { margin-top:14px; grid-template-columns:1fr 1fr; align-items:end; }
+body.judgement-active #recordingLibraryBtn { display:none; }
 body.judgement-active .judgement-card { border-color:rgba(101,225,194,.3); }
 body.judgement-active #helpBtn { visibility:hidden; }
 .help-callout { border:1px solid rgba(255,209,102,.2); background:rgba(255,209,102,.07); color:#f0dfae; border-radius:16px; padding:13px; font-size:12px; line-height:1.55; }

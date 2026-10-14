@@ -5,10 +5,8 @@
 })(typeof self !== 'undefined' ? self : globalThis, function () {
   'use strict';
   const WINDOW = { startMs: 500, endMs: 2500, gapMs: 360, toleranceCents: 25 };
-  const M1_NOTES = [41, 45, 48, 50, 52, 53, 55, 57];
-  const A_NOTES = [45, 47, 48, 50, 52];
-  const BLOCK_LABELS = { m1: 'M1', beats: '맥놀이', screen: '화면' };
-  const STAGE_LABELS = { initial: '②', correction: '교정', retry: '재시도' };
+  const BLOCK_LABELS = { beat: '맥놀이', screen: '화면' };
+  const STAGE_LABELS = { initial: '②', correction: '교정', retry: '재시도', discarded: '다시 부르기 전 실패' };
 
   function median(values) {
     const a = values.filter(Number.isFinite).sort((x, y) => x - y);
@@ -53,118 +51,56 @@
     return Math.abs(cents) <= WINDOW.toleranceCents ? 'match' : cents > 0 ? 'high' : 'low';
   }
 
-  function validJudgement(judgement) {
-    return ['high', 'match', 'low'].includes(judgement?.direction)
-      && ['sub-semitone', 'semitone-tone', 'larger', 'octave'].includes(judgement?.size)
-      && [1, 2, 3].includes(Number(judgement?.confidence));
+  function validJudgement(j) {
+    return ['high', 'match', 'low'].includes(j?.direction)
+      && (j.direction === 'match' ? j.size === null : ['lt_semitone', 'semitone_to_tone', 'more', 'octave'].includes(j.size))
+      && [1, 2, 3].includes(j?.confidence);
   }
-
-  function judgementCorrect(judgement, cents) {
-    const actual = actualDirection(cents);
-    return actual && validJudgement(judgement) ? judgement.direction === actual : null;
+  function judgementCorrect(j, cents) {
+    return Number.isFinite(cents) && validJudgement(j) ? j.direction === actualDirection(cents) : null;
   }
-
-  function shouldShowFeedback(mode, round) {
-    return mode === 'even' ? round % 2 === 0 : mode === 'third' ? round % 3 === 0 : true;
+  function shouldShowFeedback(level, trial) {
+    return level === 1 ? trial % 2 === 0 : level === 2 ? trial % 3 === 0 : true;
   }
-
-  function shuffle(values, random = Math.random) {
-    const result = [...values];
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
+  function validDate(date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    const d = new Date(date + 'T12:00:00Z');
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date;
   }
-
-  function defaultOrders(random = Math.random) {
-    const a = Array.from({ length: 22 }, (_, i) => A_NOTES[i % A_NOTES.length]);
-    return { m1: shuffle(M1_NOTES, random), a: shuffle([...a, 53, 55], random) };
-  }
-
   function noteName(midi) {
     const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    return `${names[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+    return Number.isFinite(midi) ? names[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1) : '—';
   }
-
   function parseNotes(text) {
     const names = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-    const tokens = String(text).trim().split(/[\s,→·]+/).filter(Boolean);
-    return tokens.map(token => {
-      const m = /^([A-G])([#♯b♭]?)([2-5])$/i.exec(token);
-      if (!m) throw new Error(`음 이름을 확인해 주세요: ${token}`);
-      return 12 * (Number(m[3]) + 1) + names[m[1].toUpperCase()] + (m[2] === '#' || m[2] === '♯' ? 1 : m[2] ? -1 : 0);
+    return String(text).trim().split(/[\s,/]+/).filter(Boolean).map(token => {
+      const m = /^([A-G])([#♯b♭]?)(-?\d)$/i.exec(token);
+      if (!m) throw new Error('음 이름을 확인해 주세요: ' + token);
+      const midi = 12 * (Number(m[3]) + 1) + names[m[1].toUpperCase()] + (m[2] === '#' || m[2] === '♯' ? 1 : m[2] ? -1 : 0);
+      if (midi < 0 || midi > 127) throw new Error('MIDI 범위를 벗어난 음입니다: ' + token);
+      return midi;
     });
   }
-
-  function validateOrders(m1, a) {
-    if (m1.length !== 8 || new Set(m1).size !== 8 || m1.some(n => !M1_NOTES.includes(n))) {
-      throw new Error('M1에는 F2 A2 C3 D3 E3 F3 G3 A3를 한 번씩 넣어 주세요.');
-    }
-    if (a.length !== 24 || a.some(n => !Number.isInteger(n) || !((n >= 45 && n <= 52) || n === 53 || n === 55)) || a.filter(n => n >= 53).length > 2) {
-      throw new Error('A에는 A2~E3의 음 24개를 넣고, F3·G3는 합쳐 최대 2회만 넣어 주세요.');
-    }
+  function buildRounds(date, notes) {
+    if (!validDate(date)) throw new Error('유효한 날짜를 YYYY-MM-DD로 입력해 주세요.');
+    if (notes.length !== 24) throw new Error('목표음을 순서대로 정확히 24개 붙여 넣어 주세요.');
+    const first = Number(date.slice(-2)) % 2 ? 'beat' : 'screen';
+    return notes.map((targetMidi, i) => ({ block: i < 12 ? 1 : 2, method: i < 12 ? first : first === 'beat' ? 'screen' : 'beat', trial: i + 1, targetNote: noteName(targetMidi), targetMidi }));
   }
-
-  function buildRounds(m1, a, firstBlock) {
-    validateOrders(m1, a);
-    const second = firstBlock === 'beats' ? 'screen' : 'beats';
-    return [
-      ...m1.map((targetMidi, i) => ({ routine: 'M1', block: 'm1', blockNumber: 0, round: i + 1, targetMidi })),
-      ...a.map((targetMidi, i) => ({ routine: 'A', block: i < 12 ? firstBlock : second, blockNumber: i < 12 ? 1 : 2, round: i % 12 + 1, targetMidi })),
-    ];
+  function training(day, round, stage, initialSessionId = null) {
+    return { dayId: day.dayId, ...round, stage, judgement: null, autoScore: null,
+      beatHeard: null, mixedWithReference: stage === 'correction' && round.method === 'screen',
+      initialSessionId, feedbackLevel: day.feedbackLevel };
   }
-
-  function label(training, targetMidi) {
-    return `${training.date} · ${BLOCK_LABELS[training.block] || training.block} · ${training.round}회 · ${STAGE_LABELS[training.stage] || training.stage} · ${noteName(targetMidi)}`;
+  function label(t, midi) {
+    if (Number.isInteger(t?.trial)) return t.dayId + ' · 블록' + t.block + ' ' + BLOCK_LABELS[t.method] + ' · ' + t.trial + '회 · ' + STAGE_LABELS[t.stage] + ' · ' + t.targetNote;
+    return (t.date || t.dayId || '') + ' · ' + (t.block || '') + ' · ' + (t.round || '') + '회 · ' + (STAGE_LABELS[t.stage] || t.stage) + ' · ' + noteName(midi);
   }
-
-  function stats(records) {
-    const valid = records.filter(s => s.assessment?.status === 'ok' && Number.isFinite(s.assessment.medianCents));
-    const judged = valid.filter(s => validJudgement(s.training?.judgement));
-    const correct = judged.filter(s => judgementCorrect(s.training.judgement, s.assessment.medianCents));
-    const matched = judged.filter(s => s.training.judgement.direction === 'match');
-    const confidence = [1, 2, 3].map(value => {
-      const subset = judged.filter(s => Number(s.training.judgement.confidence) === value);
-      return { value, count: subset.length, correct: subset.filter(s => judgementCorrect(s.training.judgement, s.assessment.medianCents)).length };
-    });
-    return {
-      count: records.length, validCount: valid.length, judgedCount: judged.length, correctCount: correct.length,
-      directionAccuracy: judged.length ? correct.length / judged.length * 100 : null,
-      matchCount: matched.length, matchCorrectCount: matched.filter(s => Math.abs(s.assessment.medianCents) <= 25).length,
-      absoluteMedianCents: median(valid.map(s => Math.abs(s.assessment.medianCents))),
-      within25: valid.filter(s => Math.abs(s.assessment.medianCents) <= 25).length,
-      within100: valid.filter(s => Math.abs(s.assessment.medianCents) <= 100).length,
-      confidence,
-    };
+  function exportDay(records, date) {
+    if (!validDate(date)) throw new Error('내보낼 날짜를 입력해 주세요.');
+    return { schema: 'vocal-scope-training', schemaVersion: 1, dayId: date,
+      sessions: records.filter(s => s.training?.dayId === date).slice().sort((a, b) => a.createdAt - b.createdAt) };
   }
-
-  function dailyReport(records, dayId) {
-    const selected = records.filter(s => s.training?.dayId === dayId && !s.training.excluded);
-    // Retests of an invalid attempt replace it in reports, without deleting source data.
-    const latest = new Map();
-    [...selected].sort((a, b) => a.createdAt - b.createdAt).forEach(s => {
-      latest.set(`${s.training.roundId}:${s.training.stage}`, s);
-    });
-    const trials = [...latest.values()];
-    const m1 = trials.filter(s => s.training.routine === 'M1' && s.training.stage === 'initial');
-    const blocks = ['beats', 'screen'].map(block => {
-      const initial = trials.filter(s => s.training.block === block && s.training.stage === 'initial');
-      const retries = trials.filter(s => s.training.block === block && s.training.stage === 'retry');
-      const paired = retries.filter(s => s.assessment?.status === 'ok');
-      const roundIds = new Set(paired.map(s => s.training.roundId));
-      const before = initial.filter(s => roundIds.has(s.training.roundId));
-      const correction = trials.filter(s => s.training.block === block && s.training.stage === 'correction');
-      return { block, initial: stats(initial), retry: stats(retries), beforeRetry: stats(before),
-        beatY: correction.filter(s => s.training.beatDetected === 'Y').length,
-        beatN: correction.filter(s => s.training.beatDetected === 'N').length,
-      };
-    });
-    return { m1: stats(m1), m1WithoutA3: stats(m1.filter(s => s.targetMidi !== 57)),
-      m1ByNote: m1.map(s => ({ targetMidi: s.targetMidi, cents: s.assessment?.medianCents ?? null })), blocks };
-  }
-
-  return { WINDOW, M1_NOTES, A_NOTES, BLOCK_LABELS, STAGE_LABELS, median, windowMedian,
-    actualDirection, validJudgement, judgementCorrect, shouldShowFeedback, defaultOrders,
-    noteName, parseNotes, validateOrders, buildRounds, label, stats, dailyReport };
+  return { WINDOW, BLOCK_LABELS, STAGE_LABELS, median, windowMedian, actualDirection,
+    validJudgement, judgementCorrect, shouldShowFeedback, validDate, noteName, parseNotes, buildRounds, training, label, exportDay };
 });

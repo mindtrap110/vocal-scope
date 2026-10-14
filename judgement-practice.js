@@ -1,472 +1,180 @@
 'use strict';
-
 (() => {
-  const KEY = 'vocalScopeJudgementDayV1';
+  const KEY = 'vocalScopeIntegratedRecordingV1';
   const C = window.VocalJudgementCore;
   const $ = id => document.getElementById(id);
   const V = () => window.VocalScope;
   const H = () => window.VocalHistory;
   const T = () => window.VocalScopeReferenceTone;
   let day = null;
-  const runtime = { active: false, token: 0, timer: null, waitTimer: null, resolveWait: null,
-    context: null, onset: null, captureStart: null, stage: 'initial', continuous: false, finishing: false };
-
-  function localDate() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const runtime = { context: null, stage: 'initial', onset: null, timer: null, startedAt: null, token: 0, beatStart: null };
+  const round = () => day?.rounds?.[day.cursor];
+  const current = () => H().readSessions().find(s => s.id === day?.pendingId);
+  const active = () => !!day && day.step !== 'done';
+  const pitchHidden = () => active() && day.step !== 'screenCorrection';
+  const show = (id, yes) => $(id)?.classList.toggle('hidden', !yes);
+  const cents = n => Number.isFinite(n) ? `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(1)}¢` : '유효 결과 없음';
+  function error(text = '') { $('judgementActionError').textContent = text; }
+  function persist() { try { localStorage.setItem(KEY, JSON.stringify(day)); return true; } catch (_) { error('진행을 저장하지 못했습니다.'); return false; } }
+  function clearTimer() { clearInterval(runtime.timer); clearTimeout(runtime.timer); runtime.timer = null; }
+  function localDate() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+  function updateOrder() {
+    const date = $('judgementDate').value;
+    $('judgementBlockOrder').textContent = C.validDate(date) ? Number(date.slice(-2)) % 2 ? '블록 1 맥놀이 → 블록 2 화면' : '블록 1 화면 → 블록 2 맥놀이' : '연습 날짜를 입력하세요.';
+    $('trainingExportDate').value = date;
+    if(day?.step==='done')render();
   }
-  function currentRound() { return day?.rounds?.[day.cursor] || null; }
-  function session(id) { return H()?.readSessions?.().find(s => s.id === id) || null; }
-  function latest() { return session(day?.pendingId); }
-  function signed(value) { return Number.isFinite(value) ? `${value > 0 ? '+' : ''}${Math.round(value)} cent` : '유효 결과 없음'; }
-  function escape(value) { return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch])); }
-  function show(id, visible) { $(id)?.classList.toggle('hidden', !visible); }
-  function error(message = '') { $('judgementActionError').textContent = message; }
-  function persist() {
-    try { localStorage.setItem(KEY, JSON.stringify(day)); return true; }
-    catch (_) { error('진행을 저장하지 못했습니다. 저장 공간을 확인해 주세요.'); return false; }
+  function configure() {
+    const date = $('judgementDate').value;
+    const rounds = C.buildRounds(date, C.parseNotes($('judgementTargets').value));
+    day = { dayId: date, rounds, cursor: 0, feedbackLevel: Number($('judgementFeedback').value), step: 'referenceReady', pendingId: null, initialSessionId: null };
+    window.VocalPhrasePractice?.deactivate?.({restoreTarget:true});
+    if (window.VocalTrainer?.isActive?.()) window.VocalTrainer.stop();
+    persist();
   }
-  function isBusy() { return ['preparing', 'capturing'].includes(day?.step); }
-  function isPitchHidden() { return runtime.active && !(day?.step === 'capturing' && runtime.stage === 'correction' && currentRound()?.block === 'screen'); }
-  function clearWaits() {
-    clearInterval(runtime.timer);
-    clearTimeout(runtime.waitTimer);
-    runtime.timer = null;
-    runtime.waitTimer = null;
-    runtime.resolveWait?.(false);
-    runtime.resolveWait = null;
-  }
-  function delay(ms, token) {
-    return new Promise(resolve => {
-      runtime.resolveWait = resolve;
-      runtime.waitTimer = setTimeout(() => {
-        runtime.resolveWait = null;
-        runtime.waitTimer = null;
-        resolve(runtime.token === token && runtime.active);
-      }, ms);
-    });
-  }
-  function stopTone() {
-    T()?.stop?.();
-    runtime.continuous = false;
-    $('judgementToneStatus').textContent = '기준음 꺼짐';
-    $('judgementToneToggleBtn').textContent = '지속 기준음 켜기';
-  }
-  function resetAnswer() {
-    ['judgementDirection', 'judgementSize', 'judgementConfidence'].forEach(id => { $(id).value = ''; });
-  }
-  function closeSheets() { document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); }
-
-  function randomizeOrders() {
-    const orders = C.defaultOrders();
-    $('judgementM1Order').value = orders.m1.map(C.noteName).join(' ');
-    $('judgementAOrder').value = orders.a.map(C.noteName).join(' ');
-  }
-  function setDateOrder() {
-    const number = Number($('judgementDate').value.split('-')[2]);
-    $('judgementFirstBlock').value = number % 2 ? 'beats' : 'screen';
-  }
-
-  function startDay(event) {
-    event.preventDefault();
-    if (V()?.state?.measuring) { $('judgementSetupError').textContent = '현재 측정을 끝낸 뒤 시작해 주세요.'; return; }
-    try {
-      const m1 = C.parseNotes($('judgementM1Order').value);
-      const a = C.parseNotes($('judgementAOrder').value);
-      const rounds = C.buildRounds(m1, a, $('judgementFirstBlock').value);
-      const existingPending = H()?.readSessions?.().find(s => s.training?.requiresJudgement && !s.training.judgement && !s.training.excluded);
-      if (existingPending) throw new Error('판단을 입력하지 않은 측정이 있습니다. 저장된 훈련을 먼저 이어서 완료해 주세요.');
-      day = { id: `judgement-${Date.now()}`, date: $('judgementDate').value, rounds,
-        feedbackMode: $('judgementFeedback').value, firstBlock: $('judgementFirstBlock').value,
-        cursor: 0, step: 'ready', pendingId: null, initialId: null, correctionId: null,
-        throatBefore: $('judgementThroatBefore').value.trim(), throatAfter: '', schemaVersion: 1 };
-      if (!persist()) return;
-      window.VocalPhrasePractice?.deactivate?.({ restoreTarget: true });
-      if (window.VocalTrainer?.isActive?.()) window.VocalTrainer.stop();
-      activate();
-    } catch (err) { $('judgementSetupError').textContent = err.message; }
-  }
-
-  function activate() {
-    closeSheets();
-    runtime.active = true;
-    if (currentRound()) V()?.setTarget?.(currentRound().targetMidi);
-    render();
-    $('judgementCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function captureContext(stage) {
-    const round = currentRound();
-    const check = round.routine === 'M1' || C.shouldShowFeedback(day.feedbackMode, round.round);
-    return { date: day.date, dayId: day.id, roundId: `${day.id}-${day.cursor}`, ...round, stage,
-      feedbackMode: day.feedbackMode, feedbackVisible: stage === 'retry' || check,
-      requiresJudgement: stage !== 'correction', judgement: null, revealed: stage === 'correction',
-      beatDetected: stage === 'retry' ? session(day.correctionId)?.training?.beatDetected || null : null,
-      initialSessionId: stage === 'initial' ? null : day.initialId,
-      correctionSessionId: stage === 'retry' ? day.correctionId : null,
-      throatBefore: day.throatBefore, evaluationWindowMs: [500, 2500],
-    };
-  }
-
-  async function beginCapture(stage = 'initial') {
-    if (!runtime.active || isBusy() || !currentRound()) return;
+  function context(stage) { return C.training(day, round(), stage, stage === 'initial' ? null : day.initialSessionId); }
+  function clearAnswer() { ['judgementDirection','judgementSize','judgementConfidence'].forEach(id => {$(id).value='';}); $('judgementSize').disabled=false; }
+  function answer() { return { direction:$('judgementDirection').value, size:$('judgementDirection').value==='match'?null:$('judgementSize').value, confidence:Number($('judgementConfidence').value) }; }
+  function updateAnswer() { $('judgementSize').disabled=$('judgementDirection').value==='match'; if ($('judgementSize').disabled) $('judgementSize').value=''; render(); }
+  async function reference() {
     const token = ++runtime.token;
-    error();
-    closeSheets();
-    clearWaits();
-    stopTone();
-    runtime.stage = stage;
-    runtime.context = captureContext(stage);
-    runtime.onset = null;
-    runtime.captureStart = null;
-    day.pendingId = null;
-    day.step = 'preparing';
-    resetAnswer();
-    render();
-    persist();
+    day.step='referencePlaying'; V().setTarget(round().targetMidi); render(); persist();
     try {
-      if (stage === 'initial') {
-        $('judgementInstruction').textContent = '① 기준음을 한 번 듣습니다.';
-        await T().play(currentRound().targetMidi, 1100);
-        if (!await delay(1400, token)) return;
-        stopTone();
-        $('judgementInstruction').textContent = '기준음 꺼짐 · 2초 쉬고 발성합니다.';
-        if (!await delay(2000, token)) return;
-      } else if (stage === 'retry') {
-        $('judgementInstruction').textContent = '기준음과 화면을 끕니다. 2초 쉰 뒤 같은 음을 3초 유지하세요.';
-        if (!await delay(2000, token)) return;
-      } else {
-        if (day.initialId) H().updateTraining(day.initialId, { correctionStarted: true });
-        await T().startContinuous(currentRound().targetMidi, { allowPitch: true });
-        runtime.continuous = true;
-      }
-      if (token !== runtime.token || !runtime.active) return;
-      day.step = 'capturing';
-      render();
+      await T().playTraining(round().targetMidi, 2000);
+      if (token !== runtime.token) return;
+      runtime.timer=setTimeout(()=>{ T().stop(); clearTimer(); day.step='initialReady'; persist(); render(); },2000);
+    } catch(e) {day.step='referenceReady'; render(); error(e.message);}
+  }
+  async function capture(stage) {
+    clearTimer(); T().stop(); error(); clearAnswer();
+    runtime.stage=stage; runtime.onset=null; runtime.startedAt=null; runtime.context=context(stage); day.pendingId=null;
+    day.step=stage==='correction'?'screenCorrection':'capturing';
+    V().setTarget(round().targetMidi); render(); persist();
+    const token=++runtime.token;
+    try {
+      if(stage==='correction') await T().startTrainingContinuous(round().targetMidi,{allowPitch:true});
+      if(token!==runtime.token)return;
       await V().startMeasurement();
-      if (token !== runtime.token || !runtime.active) {
-        if (V()?.state?.measuring) V().stopMeasurement('judgement-interrupted');
-        return;
-      }
-      if (!V()?.state?.measuring) throw new Error('마이크를 시작하지 못했습니다. 권한을 확인하고 다시 눌러 주세요.');
-      runtime.captureStart = performance.now();
-      runtime.timer = setInterval(tick, 70);
-      tick();
-    } catch (err) {
-      clearWaits();
-      stopTone();
-      runtime.context = null;
-      day.step = stage === 'initial' ? 'ready' : stage === 'retry' ? 'corrected' : 'result';
-      persist();
+      if(token!==runtime.token){if(V().state.measuring)V().stopMeasurement('training-interrupted');return;}
+      if(!V().state.measuring)throw new Error('마이크를 시작하지 못했습니다.');
+      runtime.startedAt=performance.now();
+      if(stage!=='correction')runtime.timer=setInterval(()=>{
+        const now=performance.now();
+        $('judgementCountdown').textContent=runtime.onset==null?'발성을 기다립니다':`${(Math.max(0,3000-(now-runtime.onset))/1000).toFixed(1)}초`;
+        if(runtime.onset!=null&&now-runtime.onset>=3000)V().stopMeasurement('training-complete');
+        else if(now-runtime.startedAt>=8000)V().stopMeasurement('training-no-voice');
+      },60);
       render();
-      error(err.message);
-    }
+    } catch(e) {clearTimer();T().stop();runtime.context=null;if(stage==='correction')day.pendingId=day.initialSessionId;day.step=stage==='correction'?'initialResult':stage==='retry'?'retryReady':'initialReady';persist();render();error(e.message);}
   }
-
-  function tick() {
-    if (day.step !== 'capturing') return;
-    const now = performance.now();
-    const correction = runtime.stage === 'correction';
-    const base = correction ? runtime.captureStart : runtime.onset;
-    const holdMs = correction ? 2000 : 3000;
-    if (base == null) {
-      $('judgementCountdown').textContent = '발성을 기다립니다';
-      if (now - runtime.captureStart > 8000) V().stopMeasurement('judgement-no-voice');
-      return;
-    }
-    const remaining = Math.max(0, holdMs - (now - base));
-    $('judgementCountdown').textContent = `${(remaining / 1000).toFixed(1)}초`;
-    if (!remaining) V().stopMeasurement('judgement-complete');
+  async function beatCorrection() {
+    if(V().state.measuring)V().stopMeasurement('training-interrupted');
+    const token=++runtime.token; runtime.beatStart=Date.now(); day.step='beatCorrection'; render(); persist();
+    try { await T().startTrainingContinuous(round().targetMidi); if(token!==runtime.token)return; runtime.beatStart=Date.now();runtime.timer=setTimeout(stopBeat,6000); }
+    catch(e){day.step='initialResult';render();error(e.message);}
   }
-
-  function onPitch(event) {
-    if (!runtime.active || day.step !== 'capturing') return;
-    if (runtime.onset == null) runtime.onset = event.detail.now;
-    if (runtime.stage === 'correction' && currentRound().block === 'screen') {
-      const cents = (event.detail.midi - currentRound().targetMidi) * 100;
-      $('judgementCorrectionLive').textContent = `교정용 실시간 추정: ${signed(cents)} · 기준음이 섞인 값은 평가에서 제외`;
-    }
+  function stopBeat() {runtime.token++;clearTimer();T().stop();day.beatStart=runtime.beatStart;day.beatEnd=Date.now();day.step='beatAnswer';$('judgementBeatDetected').value='';persist();render();}
+  function saveBeat() {
+    const value=$('judgementBeatDetected').value; if(!['Y','N'].includes(value))return;
+    if(!H().saveTrainingEvent({...context('correction'),beatHeard:value==='Y'},day.beatStart,day.beatEnd))return error('교정 기록을 저장하지 못했습니다.');
+    day.step='retryReady';persist();render();
   }
-
-  function onHistorySaved(event) {
-    if (!runtime.active || !runtime.context || event.detail.record.training?.dayId !== day?.id) return;
-    day.pendingId = event.detail.record.id;
-    if (runtime.stage === 'initial') day.initialId = day.pendingId;
-    if (runtime.stage === 'correction') day.correctionId = day.pendingId;
-    persist();
+  function onSaved(e) {
+    if(!runtime.context||e.detail.record.training?.dayId!==day?.dayId)return;
+    day.pendingId=e.detail.record.id; if(runtime.stage==='initial')day.initialSessionId=day.pendingId;
   }
-
-  function onMeasurementStop(event) {
-    if (!runtime.active || day?.step !== 'capturing') return;
-    clearWaits();
-    stopTone();
-    const complete = event.detail?.reason === 'judgement-complete';
-    const record = latest();
-    if (record && !complete) H().updateTraining(record.id, { interrupted: true }, { ...record.assessment, medianCents: null, status: 'interrupted' });
-    if (runtime.stage === 'correction') {
-      // Two-second corrections cannot fill a 0.5–2.5 s evaluation window.
-      // Speaker tone + voice is also a mixed signal, so never use it as a score.
-      if (record) H().updateTraining(record.id, { referenceOverlap: true }, { ...record.assessment, medianCents: null, status: 'correction-only' });
-      day.step = complete ? 'corrected' : 'result';
-    } else {
-      day.step = record ? 'judgement' : runtime.stage === 'retry' ? 'corrected' : 'ready';
-      if (!record) error('유효한 음정이 잡히지 않았습니다. 같은 단계를 다시 측정해 주세요.');
-    }
-    runtime.context = null;
-    persist();
-    render();
+  function onStop(e) {
+    if(!runtime.context)return;
+    clearTimer();T().stop();
+    const rec=current(), stage=runtime.stage; runtime.context=null;
+    if(!rec){day.step=stage==='retry'?'retryReady':stage==='correction'?'initialResult':'initialReady';persist();render();return error('기록을 저장하지 못했습니다. 다시 녹음해 주세요.');}
+    if(stage==='correction') day.step='retryReady';
+    else if(rec.assessment?.status!=='ok'||e.detail.reason!=='training-complete'){
+      if(!H().updateTraining(rec.id,{stage:'discarded',judgement:null,autoScore:null}))return error('실패한 시도를 저장하지 못했습니다.');
+      day.step=stage==='retry'?'retryInvalid':'initialInvalid';
+    } else day.step=stage==='initial'?'judgement':'retryResult';
+    persist();render();
+    queueMicrotask(render);
   }
-
-  function submitJudgement(event) {
-    event.preventDefault();
-    const record = latest();
-    if (!record || day.step !== 'judgement') return;
-    const judgement = { direction: $('judgementDirection').value, size: $('judgementSize').value, confidence: Number($('judgementConfidence').value) };
-    if (!C.validJudgement(judgement)) return error('방향·크기·확신도를 모두 선택해 주세요.');
-    const patch = { judgement, judgementSavedAt: Date.now(), revealed: !!record.training.feedbackVisible };
-    if (!H().updateTraining(record.id, patch)) return error('판단을 저장하지 못했습니다. 결과는 아직 숨겨져 있습니다.');
-    day.step = 'result';
-    persist();
-    error();
-    render();
+  function submitAnswer() {
+    const j=answer(),rec=current();if(!C.validJudgement(j)||!rec)return;
+    const autoScore={errorCents:rec.assessment.medianCents,correct:C.judgementCorrect(j,rec.assessment.medianCents)};
+    if(!H().updateTraining(rec.id,{judgement:j,autoScore}))return error('판단을 저장하지 못했습니다.');
+    if(!C.shouldShowFeedback(rec.training.feedbackLevel,round().trial)){advance();return;}
+    day.step='initialResult';persist();render();
   }
-
-  function needsCorrection() {
-    const record = session(day.initialId);
-    return currentRound()?.routine === 'A' && record?.training.feedbackVisible
-      && record.assessment?.status === 'ok' && Math.abs(record.assessment.medianCents) > 25;
-  }
-
-  function next() {
-    if (!runtime.active || isBusy()) return;
-    error();
-    if (day.step === 'corrected') {
-      if (currentRound().block === 'beats') {
-        const answer = $('judgementBeatDetected').value;
-        if (!['Y', 'N'].includes(answer)) return error('겹쳐 부르기 시작할 때의 울렁임 Y/N을 먼저 선택해 주세요.');
-        if (!day.correctionId || !H().updateTraining(day.correctionId, { beatDetected: answer })) return error('울렁임 판단을 저장하지 못했습니다. 교정을 다시 진행해 주세요.');
-        H().updateTraining(day.initialId, { beatDetected: answer });
-      }
-      beginCapture('retry');
-      return;
-    }
-    if (day.step === 'result') {
-      const record = latest();
-      if (record?.assessment?.status !== 'ok') return;
-      if (record.training.stage === 'initial' && needsCorrection()) { beginCapture('correction'); return; }
-      advance();
-    }
-  }
-
-  function repeat() {
-    const record = latest();
-    const stage = record?.training.stage || runtime.stage;
-    if (record && !H().updateTraining(record.id, { excluded: true })) return error('이전 시도를 저장하지 못했습니다.');
-    day.step = 'ready';
-    persist();
-    beginCapture(stage);
-  }
-
   function advance() {
-    runtime.stage = 'initial';
-    day.cursor += 1;
-    day.pendingId = null;
-    day.initialId = null;
-    day.correctionId = null;
-    day.step = currentRound() ? 'ready' : 'done';
-    $('judgementBeatDetected').value = '';
-    if (currentRound()) V().setTarget(currentRound().targetMidi);
+    clearTimer();T().stop();runtime.context=null;runtime.stage='initial';
+    day.cursor++;day.pendingId=null;day.initialSessionId=null;day.step=round()?'referenceReady':'done';
+    persist(); V().clearDisplayedPitch();render();
+  }
+  async function handleButton() {
+    error();
+    if(!day||day.step==='done'){try{configure();}catch(e){error(e.message);return;} }
+    switch(day.step){
+      case 'referenceReady':return reference();
+      case 'initialReady':case 'initialInvalid':return capture('initial');
+      case 'retryReady':case 'retryInvalid':return capture('retry');
+      case 'capturing':return V().stopMeasurement('user');
+      case 'judgement':return submitAnswer();
+      case 'initialResult':return Math.abs(current().assessment.medianCents)>25 ? round().method==='beat'?beatCorrection():capture('correction') : advance();
+      case 'beatCorrection':return stopBeat();
+      case 'beatAnswer':return saveBeat();
+      case 'screenCorrection':return V().stopMeasurement('training-complete');
+      case 'retryResult':return advance();
+    }
+  }
+  function interrupt(){
+    runtime.token++;clearTimer();T().stop();
+    if(day?.step==='beatCorrection'){stopBeat();return;}
+    if(V()?.state.measuring&&runtime.context){V().stopMeasurement('training-interrupted');return;}
+    if(day?.step==='referencePlaying'){day.step='referenceReady';persist();render();}
+  }
+  function render(){
+    document.body.classList.toggle('judgement-active',active());
+    document.body.classList.toggle('judgement-screen-correction',day?.step==='screenCorrection');
+    show('judgementSetup',!active()); show('judgementActive',!!day);
+    const button=$('measureBtn'),r=round(),rec=current(),step=day?.step;
+    $('judgementBadge').textContent=!day?'설정':step==='done'?'완료':`${r.trial}/24`;
+    if(r){$('judgementLabel').textContent=C.label(context(step==='retryReady'||step==='retryResult'||step==='retryInvalid'?'retry':step?.includes('Correction')||step==='beatAnswer'?'correction':'initial'),r.targetMidi);$('judgementTarget').textContent=r.targetNote;$('judgementProgress').textContent=`블록 ${r.block} · ${C.BLOCK_LABELS[r.method]}`;}
+    show('judgementAnswerForm',step==='judgement');show('judgementBeatField',step==='beatAnswer');show('judgementCorrectionLive',step==='screenCorrection');
+    show('judgementPitchLock',active()&&step!=='screenCorrection');show('judgementResult',step==='initialResult'||step==='retryResult');
+    $('judgementResult').textContent=step==='initialResult'?`오차 중앙값: ${cents(rec?.assessment.medianCents)}\n판단 ${rec?.training.autoScore?.correct?'정답':'오답'} (±25¢ 기준)`:step==='retryResult'?`재시도 오차 중앙값: ${cents(rec?.assessment.medianCents)}`:'';
+    const texts={referenceReady:'기준음 듣기',referencePlaying:'기준음 재생 중',initialReady:'② 3초 부르기',capturing:'녹음 정지',judgement:'결과 보기',initialResult:rec&&Math.abs(rec.assessment.medianCents)>25?'교정 시작':'다음 회차',beatCorrection:'기준음 끄기',beatAnswer:'Y/N 저장',screenCorrection:'교정 녹음 정지',retryReady:'재시도 · 3초 녹음',retryResult:'다음 회차',initialInvalid:'다시 부르기',retryInvalid:'재시도 다시 녹음',done:'새 날짜·목표음으로 녹음 준비'};
+    button.textContent=texts[step]||'기준음 듣기 · 녹음 준비';
+    button.disabled=step==='referencePlaying'||step==='judgement'&&!C.validJudgement(answer())||step==='beatAnswer'&&!['Y','N'].includes($('judgementBeatDetected').value)||step==='screenCorrection'&&runtime.startedAt==null;
+    if(step==='done'&&$('judgementDate').value===day.dayId){button.textContent='24회 녹음 완료';button.disabled=true;}
+    const instructions={referenceReady:'기준음을 2초 듣고, 같은 녹음 버튼으로 ②를 시작하세요.',referencePlaying:'목표음을 듣습니다. 2초 후 자동으로 멈춥니다.',initialReady:'기준음 꺼짐. ②는 중간 음량으로 3초 유지하세요.',capturing:'음정과 그래프를 숨기고 녹음합니다.',judgement:'방향·크기·확신도를 입력해야 결과를 볼 수 있습니다.',initialInvalid:'유효한 0.5~2.5초 결과가 없습니다. 실패한 시도는 discarded로 저장했습니다.',retryInvalid:'유효한 결과가 없습니다. 실패한 재시도는 discarded로 저장했습니다.',beatCorrection:'마이크 꺼짐. 겹쳐 부르며 맞춘 뒤 기준음을 끄세요. 최대 6초.',beatAnswer:'겹치기 시작할 때 울렁임이 들렸는지 Y/N을 입력하세요.',screenCorrection:'기준음을 켠 채 화면을 보며 2초 맞춘 뒤 녹음을 정지하세요. 이 과정은 평가하지 않습니다.',retryReady:'기준음 꺼짐. 화면을 가리고 3초 재시도합니다. 판단은 입력하지 않습니다.',done:'24회 완료. 하루 JSON에 모든 단계와 실패한 시도를 포함합니다.'};
+    $('judgementInstruction').textContent=instructions[step]||'';
+    if(step!=='capturing')$('judgementCountdown').textContent='';if(step!=='screenCorrection')$('judgementCorrectionLive').textContent='';
+  }
+  function restore(){
+    try{day=JSON.parse(localStorage.getItem(KEY)||'null');}catch(_){day=null;}
+    if(!day?.rounds?.length){day=null;return;}
+    $('judgementDate').value=day.dayId;$('judgementTargets').value=day.rounds.map(r=>r.targetNote).join(' ');$('judgementFeedback').value=String(day.feedbackLevel);
+    const interrupted=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.trial===day.cursor+1&&['initial','retry'].includes(s.training.stage)&&!s.training.judgement&&s.assessment?.status!=='ok');
+    if(interrupted){const stage=interrupted.training.stage;H().updateTraining(interrupted.id,{stage:'discarded',judgement:null,autoScore:null});day.pendingId=interrupted.id;day.initialSessionId=stage==='retry'?interrupted.training.initialSessionId:interrupted.id;day.step=stage==='retry'?'retryInvalid':'initialInvalid';}
+    const pending=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.stage==='initial'&&!s.training.judgement&&s.assessment?.status==='ok');
+    if(pending){day.cursor=pending.training.trial-1;day.pendingId=pending.id;day.initialSessionId=pending.id;day.step='judgement';}
+    else if(['capturing','screenCorrection','referencePlaying'].includes(day.step)){const rec=current();day.step=rec?.training.stage==='correction'?'retryReady':rec?.training.stage==='retry'&&rec.assessment?.status==='ok'?'retryResult':day.initialSessionId?'retryReady':'referenceReady';}
+    else if(day.step==='beatCorrection')day.step='initialResult';
     persist();
-    render();
   }
-
-  function interrupt() {
-    if (!runtime.active || !isBusy()) { stopTone(); return; }
-    runtime.token += 1;
-    clearWaits();
-    stopTone();
-    if (V()?.state?.measuring) V().stopMeasurement('judgement-interrupted');
-    else {
-      day.step = runtime.stage === 'initial' ? 'ready' : runtime.stage === 'retry' ? 'corrected' : 'result';
-      runtime.context = null;
-      persist();
-      render();
-    }
+  function init(){
+    const feedback=$('judgementFeedback').closest('label');feedback.classList.add('judgement-wide-field');$('judgementSetup').before(feedback);
+    $('judgementDate').value=localDate();restore();updateOrder();render();
+    $('judgementDate').addEventListener('change',updateOrder);
+    $('judgementSetup').addEventListener('submit',e=>{e.preventDefault();handleButton();});
+    $('judgementAnswerForm').addEventListener('submit',e=>{e.preventDefault();if(C.validJudgement(answer()))submitAnswer();});
+    ['judgementDirection','judgementSize','judgementConfidence'].forEach(id=>$(id).addEventListener('change',updateAnswer));
+    $('judgementBeatDetected').addEventListener('change',render);
+    $('judgementFeedback').addEventListener('change',()=>{if(day){day.feedbackLevel=Number($('judgementFeedback').value);persist();}});
+    $('trainingExportBtn').addEventListener('click',()=>window.VocalHistoryShare.exportTrainingDay($('trainingExportDate').value));
+    window.addEventListener('vs:pitch',e=>{if(!runtime.context)return;if(runtime.onset==null)runtime.onset=e.detail.now;if(day.step==='screenCorrection')$('judgementCorrectionLive').textContent=`교정 실시간: ${cents((e.detail.midi-round().targetMidi)*100)} · 평가 제외`;});
+    window.addEventListener('vs:history-saved',onSaved);window.addEventListener('vs:measurement-stop',onStop);
+    window.addEventListener('vs:visibility',e=>{if(e.detail.hidden)interrupt();});window.addEventListener('pagehide',interrupt);
+    window.addEventListener('vs:history-cleared',()=>{interrupt();day=null;localStorage.removeItem(KEY);render();});
   }
-
-  function pause() {
-    interrupt();
-    stopTone();
-    runtime.active = false;
-    V()?.clearDisplayedPitch?.();
-    persist();
-    render();
-  }
-
-  async function previewOnce() {
-    if (isBusy() || day.step === 'judgement' || day.step === 'corrected') return;
-    stopTone();
-    try { await T().play(currentRound().targetMidi); $('judgementToneStatus').textContent = '기준음 1회 재생'; }
-    catch (err) { error(err.message); }
-  }
-
-  async function toggleContinuous() {
-    if (runtime.continuous) { stopTone(); return; }
-    if (isBusy() || day.step === 'judgement' || day.step === 'corrected') return;
-    try {
-      await T().startContinuous(currentRound().targetMidi);
-      runtime.continuous = true;
-      $('judgementToneToggleBtn').textContent = '지속 기준음 끄기';
-      $('judgementToneStatus').textContent = `${C.noteName(currentRound().targetMidi)} 지속 재생 중`;
-    } catch (err) { error(err.message); }
-  }
-
-  function resultText(record) {
-    if (!record?.training.judgement) return '';
-    const j = record.training.judgement;
-    const directions = { high: '높음', match: '맞음', low: '낮음' };
-    const sizes = { 'sub-semitone': '반음 미만', 'semitone-tone': '반음~온음', larger: '그 이상', octave: '옥타브' };
-    const lines = [`내 판단: ${directions[j.direction]} · ${sizes[j.size]} · 확신도 ${j.confidence}`];
-    if (!record.training.feedbackVisible) lines.push('이 회차는 판단만 기록합니다. 실제 오차는 공개하지 않습니다.');
-    else if (record.assessment?.status !== 'ok') lines.push('0.5~2.5초 구간을 완성하지 못했거나 발성이 끊겼습니다. 이 결과는 통계에 포함하지 않습니다.');
-    else {
-      lines.push(`0.5~2.5초 오차 중앙값: ${signed(record.assessment.medianCents)}`);
-      lines.push(`실제 방향: ${directions[C.actualDirection(record.assessment.medianCents)]} · 방향 판단 ${C.judgementCorrect(j, record.assessment.medianCents) ? '정답' : '오답'} (±25 cent 기준)`);
-    }
-    return lines.join('\n');
-  }
-
-  function reportHtml() {
-    const report = C.dailyReport(H().readSessions(), day.id);
-    const format = value => Number.isFinite(value) ? Math.round(value) : '—';
-    const statLine = s => `유효 ${s.validCount}회 · 방향 ${s.correctCount}/${s.judgedCount} (${format(s.directionAccuracy)}%) · ‘맞음’ 정밀도 ${s.matchCorrectCount}/${s.matchCount}`;
-    const confidenceLine = s => s.confidence.map(c => `확신 ${c.value}: ${c.correct}/${c.count}`).join(' · ');
-    let html = `<h3>${escape(day.date)} 결과</h3><p>M1: ${statLine(report.m1)}</p><p>|오차| 중앙값 ${format(report.m1.absoluteMedianCents)}c · ±25c ${report.m1.within25}/${report.m1.validCount} · ±100c ${report.m1.within100}/${report.m1.validCount}</p><p>${confidenceLine(report.m1)}</p>`;
-    html += `<p>A3 제외 |오차| 중앙값: ${format(report.m1WithoutA3.absoluteMedianCents)}c · 진단 기준선과 비교용</p>`;
-    html += `<p>피드백 단계: ${escape({ all:'매 회차', even:'짝수 회차', third:'3회에 1회' }[day.feedbackMode])} · 연습 전 목 상태: ${escape(day.throatBefore || '미입력')}</p>`;
-    html += `<p>${report.m1ByNote.map(s => `${C.noteName(s.targetMidi)} ${signed(s.cents)}`).map(escape).join(' · ')}</p>`;
-    html += '<div class="judgement-table-wrap"><table><thead><tr><th>블록</th><th>재시도 |오차| 중앙값</th><th>재시도 ±25c</th><th>교정 전 |오차| 중앙값</th><th>울렁임 Y/N</th></tr></thead><tbody>';
-    report.blocks.forEach(b => {
-      html += `<tr><th>${C.BLOCK_LABELS[b.block]}</th><td>${format(b.retry.absoluteMedianCents)}c</td><td>${b.retry.validCount ? `${b.retry.within25}/${b.retry.validCount} (${Math.round(b.retry.within25/b.retry.validCount*100)}%)` : '유효 결과 없음'}</td><td>${format(b.beforeRetry.absoluteMedianCents)}c</td><td>${b.block === 'beats' ? `${b.beatY}/${b.beatN}` : '해당 없음'}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    report.blocks.forEach(b => { html += `<p>${C.BLOCK_LABELS[b.block]}: ${statLine(b.initial)}<br>${confidenceLine(b.initial)}</p>`; });
-    html += '<p class="judgement-note">교정 전 중앙값은 유효한 재시도가 있는 같은 회차의 ② 결과입니다. 유효 결과가 없으면 —로 표시합니다. 전체 표본은 기록 JSON에 보존됩니다.</p>';
-    return html;
-  }
-
-  function render() {
-    document.body.classList.toggle('judgement-active', runtime.active);
-    document.body.classList.toggle('judgement-blind', isPitchHidden());
-    show('judgementSetup', !runtime.active);
-    show('judgementResume', !runtime.active && !!day);
-    show('judgementActive', runtime.active);
-    if (!runtime.active) {
-      $('judgementBadge').textContent = day ? '진행 저장됨' : '준비';
-      if (day) $('judgementResumeText').textContent = `${day.date} · ${Math.min(day.cursor + 1, 32)}/32회차 · ${day.step === 'done' ? '결과 보기' : '이어서 진행 가능'}`;
-      return;
-    }
-    const round = currentRound();
-    const record = latest();
-    const done = day.step === 'done';
-    $('judgementBadge').textContent = done ? '완료' : '훈련 중';
-    $('judgementLabel').textContent = round ? C.label({ ...round, date: day.date, stage: runtime.stage }, round.targetMidi) : `${day.date} · 전체 완료`;
-    $('judgementTarget').textContent = round ? C.noteName(round.targetMidi) : '완료';
-    $('judgementProgress').textContent = `${Math.min(day.cursor + 1, 32)}/32회차`;
-    const instruction = {
-      ready: '① 기준음 → 2초 쉼 → ② 중간 음량으로 3초 유지. 실제 음정은 숨깁니다.',
-      preparing: '기준음과 쉼을 준비합니다. 아직 부르지 마세요.',
-      capturing: runtime.stage === 'correction'
-        ? round?.block === 'beats' ? '맥놀이 교정: 겹치기 시작할 때의 울렁임을 기억하고, 느려지는 쪽으로 2초 맞추세요.' : '화면 교정: 기준음을 켜고 실시간 오차를 보며 2초 맞추세요.'
-        : '기준음 꺼짐 · 화면 숨김. 중간 음량으로 3초 유지하세요.',
-      judgement: '③ 방향·크기·확신도를 먼저 선택하세요. 저장한 뒤에만 실제 결과가 공개됩니다.',
-      result: record?.training.stage === 'initial' && needsCorrection() ? '④ 결과 확인 완료. 다음은 이 블록의 ⑤ 교정입니다.' : '결과를 확인하고 다음 회차로 이동하세요.',
-      corrected: '⑤ 교정 완료. 기준음을 끄고 화면을 가린 채 1회 재시도합니다.',
-      done: '오늘 순서를 완료했습니다. 연습 후 목 상태를 남기고 기록을 공유할 수 있습니다.',
-    };
-    $('judgementInstruction').textContent = instruction[day.step] || '';
-    if (!isBusy()) $('judgementCountdown').textContent = '';
-    show('judgementPitchLock', !done && !(day.step === 'capturing' && runtime.stage === 'correction' && round.block === 'screen'));
-    $('judgementPitchLock').textContent = day.step === 'result' && record?.training.feedbackVisible ? '실시간 화면은 숨김 · 아래에 확정 결과 공개' : '음정·그래프·기록 결과 숨김';
-    show('judgementCorrectionLive', day.step === 'capturing' && runtime.stage === 'correction' && round.block === 'screen');
-    show('judgementCaptureBtn', day.step === 'ready');
-    show('judgementAnswerForm', day.step === 'judgement');
-    const answerButton = $('judgementAnswerForm').querySelector('button');
-    answerButton.textContent = record?.training.feedbackVisible === false ? '판단만 저장' : '판단 저장 → 결과 공개';
-    show('judgementResult', day.step === 'result');
-    if (day.step === 'result') $('judgementResult').textContent = resultText(record);
-    else $('judgementResult').textContent = '';
-    show('judgementBeatField', day.step === 'corrected' && round?.block === 'beats');
-    show('judgementNextBtn', day.step === 'corrected' || (day.step === 'result' && record?.assessment?.status === 'ok'));
-    $('judgementNextBtn').textContent = day.step === 'corrected' ? '기준음 끄기 → 숨기고 재시도' : record?.training.stage === 'initial' && needsCorrection() ? `⑤ ${C.BLOCK_LABELS[round.block]} 교정 시작` : '다음 회차';
-    show('judgementRepeatBtn', day.step === 'result' && record?.assessment?.status !== 'ok');
-    show('judgementToneControls', day.step === 'ready' || day.step === 'result');
-    show('judgementReport', done);
-    if (done) $('judgementReport').innerHTML = reportHtml();
-    show('judgementThroatAfterField', done);
-    $('judgementPauseBtn').textContent = done ? '결과 저장 · 일반 화면으로' : '잠시 중단 · 진행 저장';
-    if (runtime.continuous && !isBusy()) $('judgementToneStatus').textContent = `${C.noteName(round.targetMidi)} 지속 재생 중`;
-    if (runtime.stage === 'correction' && isBusy()) $('judgementToneStatus').textContent = '교정 중 지속 기준음 켜짐 · 종료 시 자동으로 끔';
-  }
-
-  function restore() {
-    try { day = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { day = null; }
-    if (!day?.rounds?.length) { day = null; return; }
-    const unanswered = H().readSessions().find(s => s.training?.dayId === day.id && s.training.requiresJudgement && !s.training.judgement && !s.training.excluded);
-    if (unanswered) {
-      const cursor = day.rounds.findIndex((_, i) => `${day.id}-${i}` === unanswered.training.roundId);
-      if (cursor >= 0) day.cursor = cursor;
-      day.pendingId = unanswered.id;
-      day.initialId = unanswered.training.stage === 'initial' ? unanswered.id : unanswered.training.initialSessionId;
-      day.correctionId = unanswered.training.correctionSessionId || null;
-      day.step = 'judgement';
-    }
-    if (day.step === 'capturing' || day.step === 'preparing') {
-      const pending = latest();
-      day.step = pending?.training.requiresJudgement && !pending.training.judgement ? 'judgement' : pending?.training.stage === 'correction' ? 'corrected' : 'ready';
-    }
-    if (day.step === 'judgement' && !latest()) day.step = 'ready';
-    runtime.stage = latest()?.training.stage || 'initial';
-    $('judgementThroatAfter').value = day.throatAfter || '';
-    if (day.step === 'judgement') activate();
-  }
-
-  function init() {
-    $('judgementDate').value = localDate();
-    setDateOrder();
-    randomizeOrders();
-    $('judgementDate').addEventListener('change', setDateOrder);
-    $('judgementShuffleBtn').addEventListener('click', randomizeOrders);
-    $('judgementSetup').addEventListener('submit', startDay);
-    $('judgementCaptureBtn').addEventListener('click', () => beginCapture('initial'));
-    $('judgementAnswerForm').addEventListener('submit', submitJudgement);
-    $('judgementNextBtn').addEventListener('click', next);
-    $('judgementRepeatBtn').addEventListener('click', repeat);
-    $('judgementPauseBtn').addEventListener('click', pause);
-    $('judgementResumeBtn').addEventListener('click', activate);
-    $('judgementToneOnceBtn').addEventListener('click', previewOnce);
-    $('judgementToneToggleBtn').addEventListener('click', toggleContinuous);
-    $('judgementThroatAfter').addEventListener('change', () => {
-      if (!day) return;
-      day.throatAfter = $('judgementThroatAfter').value.trim();
-      if (!H().updateTrainingDay(day.id, { throatAfter: day.throatAfter })) error('연습 후 목 상태를 기록에 저장하지 못했습니다.');
-      persist();
-    });
-    window.addEventListener('vs:pitch', onPitch);
-    window.addEventListener('vs:history-saved', onHistorySaved);
-    window.addEventListener('vs:measurement-stop', onMeasurementStop);
-    window.addEventListener('vs:visibility', event => { if (event.detail.hidden) interrupt(); });
-    window.addEventListener('pagehide', interrupt);
-    window.addEventListener('vs:history-cleared', () => { if (runtime.active) pause(); day = null; localStorage.removeItem(KEY); render(); });
-    restore();
-    render();
-  }
-
-  window.VocalJudgementPractice = {
-    isActive: () => runtime.active,
-    isPitchHidden,
-    getSessionContext: () => runtime.context ? { ...runtime.context } : null,
-    getDailyReport: () => day ? C.dailyReport(H().readSessions(), day.id) : null,
-  };
-  document.addEventListener('DOMContentLoaded', init);
+  window.VocalJudgementPractice={handleButton,isActive:active,isPitchHidden:pitchHidden,getSessionContext:()=>runtime.context?{...runtime.context}:null};
+  document.addEventListener('DOMContentLoaded',init);
 })();

@@ -8,6 +8,7 @@
   let allowPitchDuringTone = false;
   let toneToken = 0;
   let buttonTimer = null;
+  let trainingMaster = null;
 
   function ensureStyles() {
     if (document.getElementById('referenceToneStyles')) return;
@@ -69,10 +70,19 @@
   function stopActiveTone() {
     toneToken += 1;
     clearTimeout(buttonTimer);
-    for (const node of activeNodes) {
+    const nodes = activeNodes;
+    if (trainingMaster && toneContext?.state === 'running') {
+      const now = toneContext.currentTime;
+      trainingMaster.gain.cancelScheduledValues(now);
+      trainingMaster.gain.setValueAtTime(trainingMaster.gain.value, now);
+      trainingMaster.gain.linearRampToValueAtTime(0, now + 0.02);
+      for (const node of nodes) { try { node.stop?.(now + 0.02); } catch (_) {} }
+      setTimeout(() => nodes.forEach(node => { try { node.disconnect?.(); } catch (_) {} }), 25);
+    } else for (const node of nodes) {
       try { node.stop?.(); } catch (_) {}
       try { node.disconnect?.(); } catch (_) {}
     }
+    trainingMaster = null;
     activeNodes = [];
     playingUntil = 0;
     continuous = false;
@@ -83,6 +93,38 @@
 
   function midiFrequency(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  async function trainingTone(midi, durationMs, { allowPitch = false } = {}) {
+    if (!Number.isFinite(midi)) throw new Error('목표음을 확인해 주세요.');
+    stopActiveTone();
+    const token = toneToken;
+    const ctx = await ensureAudioContext();
+    if (token !== toneToken) return;
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0, now);
+    master.gain.linearRampToValueAtTime(0.2, now + 0.02);
+    if (Number.isFinite(durationMs)) {
+      const end = now + durationMs / 1000;
+      master.gain.setValueAtTime(0.2, end - 0.02);
+      master.gain.linearRampToValueAtTime(0, end);
+    }
+    master.connect(ctx.destination);
+    const nodes = [master];
+    for (let n = 1; n <= 12; n++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(midiFrequency(midi) * n, now);
+      gain.gain.setValueAtTime(1 / n, now);
+      osc.connect(gain); gain.connect(master); osc.start(now);
+      if (Number.isFinite(durationMs)) osc.stop(now + durationMs / 1000);
+      nodes.push(osc, gain);
+    }
+    activeNodes = nodes; trainingMaster = master;
+    continuous = !Number.isFinite(durationMs); allowPitchDuringTone = allowPitch;
+    playingUntil = continuous ? Infinity : performance.now() + durationMs;
   }
 
   async function playMidi(midi, durationMs=1100) {
@@ -263,6 +305,8 @@
     play: playMidi,
     stop: stopActiveTone,
     startContinuous,
+    playTraining: (midi, ms = 2000) => trainingTone(midi, ms),
+    startTrainingContinuous: (midi, options = {}) => trainingTone(midi, Infinity, options),
     get contextState() { return toneContext?.state || 'not-created'; },
     get isPlaying() { return performance.now() < playingUntil; },
     get isContinuous() { return continuous; }

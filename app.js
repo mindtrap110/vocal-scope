@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.4.0';
-const BUILD_ID = '2026-10-12-judgement-training';
+const APP_VERSION = '3.5.0';
+const BUILD_ID = '2026-10-14-integrated-recording';
 
 const state = {
   measuring: false,
@@ -551,7 +551,7 @@ async function recoverForeground() {
 }
 
 function wireUi(){
-  $('measureBtn').addEventListener('click',startMeasurement);
+  $('measureBtn').addEventListener('click',()=>window.VocalJudgementPractice?.handleButton?.());
   $('resetBtn').addEventListener('click',resetSession);
   $('freezeBtn').addEventListener('click',toggleFreeze);
   $('targetBtn').addEventListener('click',()=>$('targetDialog').showModal());

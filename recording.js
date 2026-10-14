@@ -208,6 +208,7 @@
           : state.enabled
             ? '다음 측정을 시작하면 음성도 함께 저장합니다.'
             : '필요할 때 켜면 다음 측정부터 녹음합니다.';
+      if (state.supported && !isRecording && !state.enabled) status.textContent = '기존 녹음 버튼으로 발성과 음정 데이터를 함께 저장합니다.';
     }
   }
 
@@ -240,7 +241,7 @@
 
   function startRecording() {
     renderState();
-    if (!state.enabled || !state.supported) return;
+    if ((!state.enabled && !window.VocalJudgementPractice?.getSessionContext?.()) || !state.supported) return;
     const stream = V()?.getCurrentStream?.();
     if (!stream?.getAudioTracks?.().some(track => track.readyState === 'live')) {
       toast('녹음을 시작할 마이크 입력을 찾지 못했습니다.');
