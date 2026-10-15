@@ -2,6 +2,7 @@
 (() => {
   const KEY = 'vocalScopeIntegratedRecordingV1';
   const MODE_KEY = 'vocalScopeTrainingModeV1';
+  const ORDER_KEY = 'vocalScopeTrainingFirstMethodV1';
   const C = window.VocalJudgementCore;
   const $ = id => document.getElementById(id);
   const V = () => window.VocalScope;
@@ -38,14 +39,16 @@
   }
   function updateOrder() {
     const date = $('judgementDate').value;
-    const methods = C.validDate(date) ? day?.dayId===date ? [day.rounds[0].method,day.rounds[12].method] : C.blockMethods(date) : null;
-    $('judgementBlockOrder').textContent = methods ? `블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]}` : '연습 날짜를 입력하세요.';
+    const existing = day?.dayId===date;
+    const methods = existing ? [day.rounds[0].method,day.rounds[12].method] : C.blockMethods($('judgementFirstMethod').value);
+    $('judgementFirstMethod').disabled=!!existing;
+    $('judgementBlockOrder').textContent = `블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]} · 날짜와 무관하게 선택한 순서로 진행합니다.`;
     $('trainingExportDate').value = date;
     if(day?.step==='done')render();
   }
   function configure() {
     const date = $('judgementDate').value;
-    const rounds = C.buildRounds(date, C.parseNotes($('judgementTargets').value));
+    const rounds = C.buildRounds(date, C.parseNotes($('judgementTargets').value), $('judgementFirstMethod').value);
     day = { dayId: date, rounds, cursor: 0, feedbackLevel: Number($('judgementFeedback').value), step: 'referenceReady', pendingId: null, initialSessionId: null };
     leaveOtherPractice();
     persist();
@@ -189,8 +192,7 @@
   function restore(){
     try{day=JSON.parse(localStorage.getItem(KEY)||'null');}catch(_){day=null;}
     if(!day?.rounds?.length){day=null;return;}
-    // Only refresh an untouched plan. Never relabel completed or ongoing data.
-    if(day.cursor===0&&!H().readSessions().some(s=>s.training?.dayId===day.dayId))day.rounds=C.buildRounds(day.dayId,day.rounds.map(r=>r.targetMidi));
+    $('judgementFirstMethod').value=day.rounds[0].method;
     $('judgementDate').value=day.dayId;$('judgementTargets').value=day.rounds.map(r=>r.targetNote).join(' ');$('judgementFeedback').value=String(day.feedbackLevel);
     const interrupted=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.trial===day.cursor+1&&['initial','retry'].includes(s.training.stage)&&!s.training.judgement&&s.assessment?.status!=='ok');
     if(interrupted){const stage=interrupted.training.stage;H().updateTraining(interrupted.id,{stage:'discarded',judgement:null,autoScore:null});day.pendingId=interrupted.id;day.initialSessionId=stage==='retry'?interrupted.training.initialSessionId:interrupted.id;day.step=stage==='retry'?'retryInvalid':'initialInvalid';}
@@ -202,6 +204,7 @@
   }
   function init(){
     const feedback=$('judgementFeedback').closest('label');feedback.classList.add('judgement-wide-field');$('judgementSetup').before(feedback);
+    try{const first=localStorage.getItem(ORDER_KEY);if(['screen','beat'].includes(first))$('judgementFirstMethod').value=first;}catch(_){}
     $('judgementDate').value=localDate();restore();
     try{const mode=JSON.parse(localStorage.getItem(MODE_KEY)||'null');enabled=mode?.enabled===true;normalTarget=Number.isFinite(mode?.normalTarget)?mode.normalTarget:null;}catch(_){enabled=false;}
     if(enabled){leaveOtherPractice();V().clearDisplayedPitch();}
@@ -209,6 +212,7 @@
     window.dispatchEvent(new CustomEvent('vs:training-mode-change',{detail:{enabled}}));
     $('trainingEnabledToggle').addEventListener('change',e=>setEnabled(e.target.checked));
     $('judgementDate').addEventListener('change',updateOrder);
+    $('judgementFirstMethod').addEventListener('change',()=>{try{localStorage.setItem(ORDER_KEY,$('judgementFirstMethod').value);}catch(_){}updateOrder();});
     $('judgementSetup').addEventListener('submit',e=>{e.preventDefault();handleButton();});
     $('judgementAnswerForm').addEventListener('submit',e=>{e.preventDefault();if(C.validJudgement(answer()))submitAnswer();});
     ['judgementDirection','judgementSize','judgementConfidence'].forEach(id=>$(id).addEventListener('change',updateAnswer));

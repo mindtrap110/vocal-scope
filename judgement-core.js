@@ -81,15 +81,13 @@
       return midi;
     });
   }
-  function blockMethods(date) {
-    if (!validDate(date)) throw new Error('유효한 날짜를 YYYY-MM-DD로 입력해 주세요.');
-    // Alternate calendar days, including month/year boundaries. The agreed
-    // anchor is 2026-10-15: screen first, then beat.
-    const days = Math.round((Date.parse(date + 'T12:00:00Z') - Date.parse('2026-10-15T12:00:00Z')) / 86400000);
-    return days % 2 === 0 ? ['screen', 'beat'] : ['beat', 'screen'];
+  function blockMethods(first) {
+    if (!['screen', 'beat'].includes(first)) throw new Error('블록 순서를 선택해 주세요.');
+    return first === 'screen' ? ['screen', 'beat'] : ['beat', 'screen'];
   }
-  function buildRounds(date, notes) {
-    const methods = blockMethods(date);
+  function buildRounds(date, notes, first) {
+    if (!validDate(date)) throw new Error('유효한 날짜를 YYYY-MM-DD로 입력해 주세요.');
+    const methods = blockMethods(first);
     if (notes.length !== 24) throw new Error('목표음을 순서대로 정확히 24개 붙여 넣어 주세요.');
     return notes.map((targetMidi, i) => ({ block: i < 12 ? 1 : 2, method: methods[i < 12 ? 0 : 1], trial: i + 1, targetNote: noteName(targetMidi), targetMidi }));
   }

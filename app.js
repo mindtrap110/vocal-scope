@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.5.2';
-const BUILD_ID = '2026-10-15-alternating-blocks';
+const APP_VERSION = '3.5.3';
+const BUILD_ID = '2026-10-16-selectable-blocks';
 
 const state = {
   measuring: false,
