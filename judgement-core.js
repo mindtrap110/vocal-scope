@@ -81,11 +81,17 @@
       return midi;
     });
   }
-  function buildRounds(date, notes) {
+  function blockMethods(date) {
     if (!validDate(date)) throw new Error('유효한 날짜를 YYYY-MM-DD로 입력해 주세요.');
+    // Alternate calendar days, including month/year boundaries. The agreed
+    // anchor is 2026-10-15: screen first, then beat.
+    const days = Math.round((Date.parse(date + 'T12:00:00Z') - Date.parse('2026-10-15T12:00:00Z')) / 86400000);
+    return days % 2 === 0 ? ['screen', 'beat'] : ['beat', 'screen'];
+  }
+  function buildRounds(date, notes) {
+    const methods = blockMethods(date);
     if (notes.length !== 24) throw new Error('목표음을 순서대로 정확히 24개 붙여 넣어 주세요.');
-    const first = Number(date.slice(-2)) % 2 ? 'beat' : 'screen';
-    return notes.map((targetMidi, i) => ({ block: i < 12 ? 1 : 2, method: i < 12 ? first : first === 'beat' ? 'screen' : 'beat', trial: i + 1, targetNote: noteName(targetMidi), targetMidi }));
+    return notes.map((targetMidi, i) => ({ block: i < 12 ? 1 : 2, method: methods[i < 12 ? 0 : 1], trial: i + 1, targetNote: noteName(targetMidi), targetMidi }));
   }
   function training(day, round, stage, initialSessionId = null) {
     return { dayId: day.dayId, ...round, stage, judgement: null, autoScore: null,
@@ -102,5 +108,5 @@
       sessions: records.filter(s => s.training?.dayId === date).slice().sort((a, b) => a.createdAt - b.createdAt) };
   }
   return { WINDOW, BLOCK_LABELS, STAGE_LABELS, median, windowMedian, actualDirection,
-    validJudgement, judgementCorrect, shouldShowFeedback, validDate, noteName, parseNotes, buildRounds, training, label, exportDay };
+    validJudgement, judgementCorrect, shouldShowFeedback, validDate, noteName, parseNotes, blockMethods, buildRounds, training, label, exportDay };
 });

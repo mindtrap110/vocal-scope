@@ -38,7 +38,8 @@
   }
   function updateOrder() {
     const date = $('judgementDate').value;
-    $('judgementBlockOrder').textContent = C.validDate(date) ? Number(date.slice(-2)) % 2 ? '블록 1 맥놀이 → 블록 2 화면' : '블록 1 화면 → 블록 2 맥놀이' : '연습 날짜를 입력하세요.';
+    const methods = C.validDate(date) ? day?.dayId===date ? [day.rounds[0].method,day.rounds[12].method] : C.blockMethods(date) : null;
+    $('judgementBlockOrder').textContent = methods ? `블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]}` : '연습 날짜를 입력하세요.';
     $('trainingExportDate').value = date;
     if(day?.step==='done')render();
   }
@@ -188,6 +189,8 @@
   function restore(){
     try{day=JSON.parse(localStorage.getItem(KEY)||'null');}catch(_){day=null;}
     if(!day?.rounds?.length){day=null;return;}
+    // Only refresh an untouched plan. Never relabel completed or ongoing data.
+    if(day.cursor===0&&!H().readSessions().some(s=>s.training?.dayId===day.dayId))day.rounds=C.buildRounds(day.dayId,day.rounds.map(r=>r.targetMidi));
     $('judgementDate').value=day.dayId;$('judgementTargets').value=day.rounds.map(r=>r.targetNote).join(' ');$('judgementFeedback').value=String(day.feedbackLevel);
     const interrupted=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.trial===day.cursor+1&&['initial','retry'].includes(s.training.stage)&&!s.training.judgement&&s.assessment?.status!=='ok');
     if(interrupted){const stage=interrupted.training.stage;H().updateTraining(interrupted.id,{stage:'discarded',judgement:null,autoScore:null});day.pendingId=interrupted.id;day.initialSessionId=stage==='retry'?interrupted.training.initialSessionId:interrupted.id;day.step=stage==='retry'?'retryInvalid':'initialInvalid';}
