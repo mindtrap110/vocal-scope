@@ -194,6 +194,7 @@
     const label = $('recordingToggleLabel');
     const status = $('recordingStatus');
     const isRecording = state.recorder?.state === 'recording';
+    const trainingEnabled = window.VocalJudgementPractice?.isEnabled?.();
     if (toggle) {
       toggle.checked = state.enabled;
       toggle.disabled = !state.supported || !!V()?.state?.measuring;
@@ -205,10 +206,9 @@
         ? '이 브라우저에서는 녹음을 저장할 수 없습니다.'
         : isRecording
           ? '현재 측정의 음성을 녹음하고 있습니다.'
-          : state.enabled
+          : state.enabled || trainingEnabled
             ? '다음 측정을 시작하면 음성도 함께 저장합니다.'
             : '필요할 때 켜면 다음 측정부터 녹음합니다.';
-      if (state.supported && !isRecording && !state.enabled) status.textContent = '기존 녹음 버튼으로 발성과 음정 데이터를 함께 저장합니다.';
     }
   }
 
@@ -575,6 +575,7 @@
     });
 
     window.addEventListener('vs:measurement-start', startRecording);
+    window.addEventListener('vs:training-mode-change', renderState);
     window.addEventListener('vs:measurement-stop', event => stopRecording(event.detail?.reason || 'user'));
     window.addEventListener('vs:history-saved', event => {
       const id = event.detail?.record?.id;

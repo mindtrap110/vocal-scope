@@ -1,8 +1,16 @@
-# 보컬 스코프 3.5.0
+# 보컬 스코프 3.5.1
 
-기존 녹음 버튼에 2026-10-14 판단 보정 명세를 통합한 정적 PWA입니다. 별도 훈련 시작 버튼이나 M1 화면은 없습니다.
+기존 녹음 버튼에 2026-10-14 판단 보정 명세를 선택적으로 적용하는 정적 PWA입니다. 기본값은 훈련 꺼짐입니다. 별도 훈련 시작 버튼이나 M1 화면은 없습니다.
 
-## 사용
+## 기본 녹음과 훈련 전환
+
+- 훈련 꺼짐: 날짜·목표음 24개를 입력하지 않고 기존 버튼으로 바로 측정을 시작하고 직접 정지합니다. 음정과 그래프를 실시간 표시하며 판단 입력이나 3초 자동 정지는 적용하지 않습니다. 기존 목표음·가사 구절 연습·기록 공유를 이용할 수 있습니다.
+- 음성 파일 저장은 이전 버전처럼 별도 스위치로 켜고 끕니다. 기존 저장 설정을 유지하며, 음정 기록은 측정 종료 시 저장합니다.
+- 판단 보정 훈련 켜짐: 같은 버튼으로 아래 훈련 절차를 진행하고 음성과 training 정보를 함께 저장합니다.
+- 훈련을 끄면 현재 녹음을 저장하고 일반 녹음으로 돌아갑니다. 중단한 ②·재시도는 discarded로 저장합니다. 진행 상황과 켜짐/꺼짐 설정을 보관하므로 다시 켜서 이어갈 수 있습니다.
+- 훈련을 처음 켜기 전에는 이전 버전의 훈련 진행 기록이 있어도 자동으로 켜지지 않습니다. 훈련 중 목표음은 일반 녹음의 목표음 설정을 덮어쓰지 않습니다.
+
+## 훈련을 켠 뒤 사용
 
 1. 연습 녹음 영역에 날짜(YYYY-MM-DD), 피드백 단계, 목표음 24개를 입력합니다. 목표음은 공백 또는 /로 나눠 붙여 넣습니다.
 2. 기존 녹음 버튼으로 목표음을 2초 듣습니다. 자동으로 멈춘 뒤 같은 버튼으로 ② 녹음을 시작하고 3초 부릅니다.
@@ -28,7 +36,7 @@
 
 ## 저장과 내보내기
 
-각 새 발성 레코드의 training에는 dayId, block, method, trial, stage, targetNote, targetMidi, judgement, autoScore, beatHeard, mixedWithReference, initialSessionId, feedbackLevel을 저장합니다.
+훈련을 켜고 녹음한 각 레코드의 training에는 dayId, block, method, trial, stage, targetNote, targetMidi, judgement, autoScore, beatHeard, mixedWithReference, initialSessionId, feedbackLevel을 저장합니다. 일반 녹음의 training은 null입니다.
 
 - judgement/autoScore는 initial에서만, beatHeard는 beat correction에서만 채웁니다.
 - correction/retry의 initialSessionId는 같은 회차의 initial 레코드 ID입니다.
@@ -40,7 +48,7 @@
 ## 검증
 
 - node tests/judgement-test.cjs: assessment 함수 해시 동일성, MIDI, 날짜, 순서, 저장 스키마, 채점, 모든 단계의 내보내기
-- NODE_PATH=/path/to/test/node_modules node tests/judgement-flow-test.cjs: jsdom 26.1.0에서 명세 확인 1~5, 24회/두 블록, 실패 시도, Y/N, 피드백 단계, 12배음 및 20ms 페이드
-- BROWSER_EXECUTABLE=/path/to/chromium BROWSER_FAKE_AUDIO=/path/to/voice-80.wav node tests/judgement-browser-test.cjs: Playwright에서 A2보다 80¢ 낮은 48kHz 모노 WAV로 두 블록의 실제 분석·MediaRecorder·IndexedDB·하루 파일 다운로드 검증
+- NODE_PATH=/path/to/test/node_modules node tests/judgement-flow-test.cjs: jsdom 26.1.0에서 기본 꺼짐, 일반 녹음, 전환·재개, 명세 확인 1~5, 24회/두 블록, 실패 시도, Y/N, 피드백 단계, 12배음 및 20ms 페이드
+- BROWSER_EXECUTABLE=/path/to/chromium BROWSER_FAKE_AUDIO=/path/to/voice-80.wav node tests/judgement-browser-test.cjs: Playwright에서 일반 녹음의 수동 정지·선택적 음성 저장, 훈련 전환·재개, A2보다 80¢ 낮은 48kHz 모노 WAV로 두 블록의 실제 분석·MediaRecorder·IndexedDB·하루 파일 다운로드 검증
 
 정적 파일을 GitHub Pages 같은 HTTPS 호스팅에 배포합니다. 녹음과 기록은 이 기기의 브라우저 저장소에 보관되므로 중요한 파일은 별도로 내보내세요.

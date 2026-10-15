@@ -33,12 +33,21 @@
     <section id="recordingCard" class="recording-card judgement-card card">
       <div class="section-heading recording-heading">
         <div><span class="section-kicker">AUDIO RECORDING</span><h2>연습 녹음</h2></div>
-        <span id="judgementBadge" class="phrase-mode-badge">설정</span>
+        <span id="judgementBadge" class="phrase-mode-badge">일반 녹음</span>
       </div>
-      <form id="judgementSetup" class="judgement-setup">
+      <div class="recording-option-row">
+        <span id="trainingModeTitle">판단 보정 훈련</span>
+        <label class="recording-toggle-control">
+          <input id="trainingEnabledToggle" type="checkbox" role="switch" aria-labelledby="trainingModeTitle" aria-describedby="judgementModeHelp" aria-controls="judgementSetup judgementActive" />
+          <span class="recording-toggle-track" aria-hidden="true"><i></i></span>
+          <strong id="trainingToggleLabel">꺼짐</strong>
+        </label>
+      </div>
+      <p id="judgementModeHelp" class="judgement-note">훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.</p>
+      <form id="judgementSetup" class="judgement-setup hidden">
         <div class="judgement-fields">
           <label>연습 날짜<input id="judgementDate" type="date" required /></label>
-          <label>피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
+          <label id="judgementFeedbackField">피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
         </div>
         <p id="judgementBlockOrder" class="judgement-note"></p>
         <label class="judgement-wide-field">오늘 목표음 24개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="F3 B2 A2 A2 E3 B2 D#3 C#3 A#2 C3 A2 D3 / C3 D3 C3 G3 C#3 D3 E3 E3 A#2 D#3 B2 D#3"></textarea></label>
@@ -61,10 +70,18 @@
         <div id="judgementResult" class="judgement-result hidden" aria-live="polite"></div>
         <label id="judgementBeatField" class="judgement-wide-field hidden">겹치기 시작할 때 울렁임이 들렸나?<select id="judgementBeatDetected"><option value="">Y / N 선택</option><option value="Y">Y · 들림</option><option value="N">N · 안 들림</option></select></label>
       </div>
-      <p id="judgementActionError" class="judgement-error" role="alert"></p>
+      <p id="judgementActionError" class="judgement-error hidden" role="alert"></p>
+      <div id="recordingSaveControl" class="recording-option-row">
+        <span id="recordingSaveTitle">음성 파일 저장</span>
+        <label class="recording-toggle-control">
+          <input id="recordingEnabledToggle" type="checkbox" role="switch" aria-labelledby="recordingSaveTitle" />
+          <span class="recording-toggle-track" aria-hidden="true"><i></i></span>
+          <strong id="recordingToggleLabel">꺼짐</strong>
+        </label>
+      </div>
       <p id="recordingStatus" class="recording-status"></p>
       <div class="recording-footer"><span id="recordingStorageSummary"></span><button id="recordingLibraryBtn" class="ghost-btn" type="button">녹음 목록</button></div>
-      <div class="judgement-fields recording-export">
+      <div id="trainingExportControls" class="judgement-fields recording-export hidden">
         <label>내보낼 연습 날짜<input id="trainingExportDate" type="date" /></label>
         <button id="trainingExportBtn" class="secondary-btn" type="button">하루 JSON 내보내기</button>
       </div>
@@ -178,8 +195,8 @@
     </section>
 
     <div class="sticky-actions">
-      <button id="measureBtn" class="primary-btn">기준음 듣기 · 녹음 준비</button>
-      <button id="resetBtn" class="secondary-btn hidden">현재 기록 지우기</button>
+      <button id="measureBtn" class="primary-btn">마이크로 측정 시작</button>
+      <button id="resetBtn" class="secondary-btn">현재 기록 지우기</button>
     </div>
   </main>
 
