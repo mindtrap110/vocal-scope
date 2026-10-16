@@ -39,12 +39,26 @@
   }
   function updateOrder() {
     const date = $('judgementDate').value;
-    const existing = day?.dayId===date;
-    const methods = existing ? [day.rounds[0].method,day.rounds[12].method] : C.blockMethods($('judgementFirstMethod').value);
-    $('judgementFirstMethod').disabled=!!existing;
+    const methods = C.blockMethods($('judgementFirstMethod').value);
     $('judgementBlockOrder').textContent = `블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]} · 날짜와 무관하게 선택한 순서로 진행합니다.`;
     $('trainingExportDate').value = date;
     if(day?.step==='done')render();
+  }
+  function changeOrder() {
+    const selected=$('judgementFirstMethod').value;
+    if($('judgementFirstMethod').disabled){$('judgementFirstMethod').value=day?.rounds[0].method||selected;return;}
+    if(active()&&selected!==day.rounds[0].method){
+      const rec=current();
+      if(rec?.training.stage==='initial'&&!rec.training.judgement&&!H().updateTraining(rec.id,{stage:'discarded',judgement:null,autoScore:null})){
+        $('judgementFirstMethod').value=day.rounds[0].method;return error('이전 시도를 보존하지 못했습니다.');
+      }
+      runtime.token++;clearTimer();T().stop();runtime.context=null;runtime.stage='initial';runtime.onset=null;runtime.startedAt=null;
+      day.rounds=C.buildRounds(day.dayId,day.rounds.map(r=>r.targetMidi),selected);
+      day.pendingId=null;day.initialSessionId=null;day.step='referenceReady';
+      persist();clearAnswer();V().clearDisplayedPitch();
+    }
+    try{localStorage.setItem(ORDER_KEY,selected);}catch(_){}
+    error();updateOrder();render();
   }
   function configure() {
     const date = $('judgementDate').value;
@@ -168,6 +182,8 @@
     $('judgementModeHelp').textContent=enabled?'같은 녹음 버튼으로 훈련을 진행합니다. 훈련을 꺼도 진행 상황은 보관됩니다.':'훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.';
     show('judgementSetup',enabled&&!active()); show('judgementActive',enabled&&!!day);
     show('judgementFeedbackField',enabled);show('trainingExportControls',enabled);show('judgementActionError',enabled);
+    show('judgementOrderControls',enabled);show('judgementOrderHelp',active());
+    $('judgementFirstMethod').disabled=runtime.preparing||V().state.measuring||['referencePlaying','beatCorrection'].includes(day?.step)||day?.step==='done'&&$('judgementDate').value===day.dayId;
     show('recordingSaveControl',!enabled);show('resetBtn',!enabled);
     const button=$('measureBtn'),r=round(),rec=current(),step=day?.step;
     if(!enabled){
@@ -181,7 +197,7 @@
     show('judgementAnswerForm',step==='judgement');show('judgementBeatField',step==='beatAnswer');show('judgementCorrectionLive',step==='screenCorrection');
     show('judgementPitchLock',active()&&step!=='screenCorrection');show('judgementResult',step==='initialResult'||step==='retryResult');
     $('judgementResult').textContent=step==='initialResult'?`오차 중앙값: ${cents(rec?.assessment.medianCents)}\n판단 ${rec?.training.autoScore?.correct?'정답':'오답'} (±25¢ 기준)`:step==='retryResult'?`재시도 오차 중앙값: ${cents(rec?.assessment.medianCents)}`:'';
-    const texts={referenceReady:'기준음 듣기',referencePlaying:'기준음 재생 중',initialReady:'② 3초 부르기',capturing:'녹음 정지',judgement:'결과 보기',initialResult:rec&&Math.abs(rec.assessment.medianCents)>25?'교정 시작':'다음 회차',beatCorrection:'기준음 끄기',beatAnswer:'Y/N 저장',screenCorrection:'교정 녹음 정지',retryReady:'재시도 · 3초 녹음',retryResult:'다음 회차',initialInvalid:'다시 부르기',retryInvalid:'재시도 다시 녹음',done:'새 날짜·목표음으로 녹음 준비'};
+    const texts={referenceReady:'기준음 듣기',referencePlaying:'기준음 재생 중',initialReady:'② 3초 부르기',capturing:'녹음 정지',judgement:'결과 보기',initialResult:rec&&Math.abs(rec.assessment.medianCents)>25?`${C.BLOCK_LABELS[r.method]} 교정 시작`:'다음 회차',beatCorrection:'기준음 끄기',beatAnswer:'Y/N 저장',screenCorrection:'교정 녹음 정지',retryReady:'재시도 · 3초 녹음',retryResult:'다음 회차',initialInvalid:'다시 부르기',retryInvalid:'재시도 다시 녹음',done:'새 날짜·목표음으로 녹음 준비'};
     button.textContent=texts[step]||'기준음 듣기 · 녹음 준비';
     button.disabled=runtime.preparing||step==='referencePlaying'||step==='judgement'&&!C.validJudgement(answer())||step==='beatAnswer'&&!['Y','N'].includes($('judgementBeatDetected').value)||step==='screenCorrection'&&runtime.startedAt==null;
     if(step==='done'&&$('judgementDate').value===day.dayId){button.textContent='24회 녹음 완료';button.disabled=true;}
@@ -212,7 +228,7 @@
     window.dispatchEvent(new CustomEvent('vs:training-mode-change',{detail:{enabled}}));
     $('trainingEnabledToggle').addEventListener('change',e=>setEnabled(e.target.checked));
     $('judgementDate').addEventListener('change',updateOrder);
-    $('judgementFirstMethod').addEventListener('change',()=>{try{localStorage.setItem(ORDER_KEY,$('judgementFirstMethod').value);}catch(_){}updateOrder();});
+    $('judgementFirstMethod').addEventListener('change',changeOrder);
     $('judgementSetup').addEventListener('submit',e=>{e.preventDefault();handleButton();});
     $('judgementAnswerForm').addEventListener('submit',e=>{e.preventDefault();if(C.validJudgement(answer()))submitAnswer();});
     ['judgementDirection','judgementSize','judgementConfidence'].forEach(id=>$(id).addEventListener('change',updateAnswer));

@@ -9,8 +9,8 @@
   <meta name="apple-mobile-web-app-title" content="보컬 스코프" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
-  <link rel="stylesheet" href="./styles.css" />
-  <link rel="stylesheet" href="./history.css" />
+  <link rel="stylesheet" href="./styles.css?v=3.5.5" />
+  <link rel="stylesheet" href="./history.css?v=3.5.5" />
   <title>보컬 스코프</title>
 </head>
 <body>
@@ -44,13 +44,16 @@
         </label>
       </div>
       <p id="judgementModeHelp" class="judgement-note">훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.</p>
+      <div id="judgementOrderControls" class="hidden">
+        <label class="judgement-wide-field">블록 순서<select id="judgementFirstMethod"><option value="screen">화면 → 맥놀이</option><option value="beat">맥놀이 → 화면</option></select></label>
+        <p id="judgementBlockOrder" class="judgement-note"></p>
+        <p id="judgementOrderHelp" class="judgement-note hidden">순서를 바꾸면 현재 회차를 처음부터 다시 진행합니다. 기존 녹음과 기록은 남습니다.</p>
+      </div>
       <form id="judgementSetup" class="judgement-setup hidden">
         <div class="judgement-fields">
           <label>연습 날짜<input id="judgementDate" type="date" required /></label>
-          <label>블록 순서<select id="judgementFirstMethod"><option value="screen">화면 → 맥놀이</option><option value="beat">맥놀이 → 화면</option></select></label>
           <label id="judgementFeedbackField">피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
         </div>
-        <p id="judgementBlockOrder" class="judgement-note"></p>
         <label class="judgement-wide-field">오늘 목표음 24개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="F3 B2 A2 A2 E3 B2 D#3 C#3 A#2 C3 A2 D3 / C3 D3 C3 G3 C#3 D3 E3 E3 A#2 D#3 B2 D#3"></textarea></label>
         <p class="judgement-note">아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.</p>
       </form>
@@ -398,15 +401,15 @@
     </form>
   </dialog>
 
-  <script src="./pitch-core.js"></script>
-  <script src="./judgement-core.js"></script>
-  <script src="./app.js" defer></script>
-  <script src="./history.js" defer></script>
-  <script src="./history-share.js" defer></script>
-  <script src="./vocal-scope-patch.js" defer></script>
-  <script src="./reference-tone.js" defer></script>
-  <script src="./phrase-practice.js" defer></script>
-  <script src="./recording.js" defer></script>
-  <script src="./judgement-practice.js" defer></script>
+  <script src="./pitch-core.js?v=3.5.5"></script>
+  <script src="./judgement-core.js?v=3.5.5"></script>
+  <script src="./app.js?v=3.5.5" defer></script>
+  <script src="./history.js?v=3.5.5" defer></script>
+  <script src="./history-share.js?v=3.5.5" defer></script>
+  <script src="./vocal-scope-patch.js?v=3.5.5" defer></script>
+  <script src="./reference-tone.js?v=3.5.5" defer></script>
+  <script src="./phrase-practice.js?v=3.5.5" defer></script>
+  <script src="./recording.js?v=3.5.5" defer></script>
+  <script src="./judgement-practice.js?v=3.5.5" defer></script>
 </body>
 </html>

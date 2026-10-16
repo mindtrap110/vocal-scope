@@ -1,8 +1,9 @@
-const CACHE = 'vocal-scope-v3-20261016-selectable-blocks';
+const CACHE = 'vocal-scope-v3-20261016-pitch-recovery';
 const ASSETS = ['./','./index.html','./styles.css','./history.css','./app.js','./history.js','./history-share.js','./vocal-scope-patch.js','./reference-tone.js','./phrase-practice.js','./recording.js','./judgement-core.js','./judgement-practice.js','./pitch-core.js','./pitch-worker.js','./manifest.webmanifest','./icon-180.png','./icon-512.png'];
+ASSETS.push(...ASSETS.filter(url => /\.(?:js|css)$/.test(url)).map(url => `${url}?v=3.5.5`));
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS.map(url => new Request(url, { cache:'reload' })))));
   self.skipWaiting();
 });
 
@@ -29,7 +30,7 @@ self.addEventListener('fetch', event => {
   event.respondWith((async () => {
     const cached = await caches.match(event.request);
     try {
-      const fresh = await fetch(event.request);
+      const fresh = await fetch(event.request, { cache:'no-store' });
       if (fresh && fresh.ok) {
         const copy = fresh.clone();
         caches.open(CACHE).then(cache => cache.put(event.request, copy));

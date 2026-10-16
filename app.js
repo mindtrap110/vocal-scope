@@ -6,8 +6,9 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.5.3';
-const BUILD_ID = '2026-10-16-selectable-blocks';
+const APP_VERSION = '3.5.5';
+const BUILD_ID = '2026-10-16-pitch-recovery';
+const WORKER_TIMEOUT_MS = 1500;
 
 const state = {
   measuring: false,
@@ -18,6 +19,10 @@ const state = {
   worker: null,
   timer: null,
   workerBusy: false,
+  workerSentAt: null,
+  workerRestartAt: null,
+  workerRestarts: 0,
+  workerFailureStreak: 0,
   noiseFloor: -72,
   gateDb: -64,
   smoothedMidi: null,
@@ -35,6 +40,11 @@ const state = {
   lastTargetTick: null,
   octaveCandidate: null,
   octaveCandidateCount: 0,
+  trackedMidi: null,
+  lastCandidateAt: null,
+  jumpCandidate: null,
+  jumpCandidateCount: 0,
+  rejectedPitchJumps: 0,
   lastGood: null,
   ignorePitchUntil: 0,
   wakeLock: null,
@@ -141,23 +151,25 @@ function buildTargetPicker() {
   }
 }
 
-function stabilizeMidi(rawMidi) {
-  const recentMedian = median(state.recentRawMidi.slice(-5));
-  let candidate = rawMidi;
-  if (recentMedian != null) {
-    const diff = rawMidi - recentMedian;
-    const octaveLike = Math.abs(Math.abs(diff) - 12) < 1.15;
-    if (octaveLike) {
-      const dir = Math.sign(diff);
-      if (state.octaveCandidate === dir) state.octaveCandidateCount++;
-      else { state.octaveCandidate = dir; state.octaveCandidateCount = 1; }
-      if (state.octaveCandidateCount < 3) candidate = rawMidi - 12 * dir;
-      else { state.octaveCandidate = null; state.octaveCandidateCount = 0; }
-    } else {
-      state.octaveCandidate = null;
-      state.octaveCandidateCount = 0;
-    }
+function resetPitchTracking() {
+  state.smoothedMidi=null;state.recentRawMidi=[];state.pitchWindow=[];
+  state.trackedMidi=null;state.lastCandidateAt=null;
+  state.jumpCandidate=null;state.jumpCandidateCount=0;
+  state.octaveCandidate=null;state.octaveCandidateCount=0;
+}
+function stabilizeMidi(rawMidi, now=performance.now()) {
+  if(state.lastCandidateAt!=null&&now-state.lastCandidateAt>360)resetPitchTracking();
+  state.lastCandidateAt=now;
+  if(state.trackedMidi!=null&&Math.abs(rawMidi-state.trackedMidi)>7){
+    if(state.jumpCandidate!=null&&Math.abs(rawMidi-state.jumpCandidate)<0.75)state.jumpCandidateCount++;
+    else {state.jumpCandidate=rawMidi;state.jumpCandidateCount=1;}
+    if(state.jumpCandidateCount<3){state.rejectedPitchJumps++;return null;}
+    // A sustained real leap is accepted at its own pitch, never folded toward
+    // the target or drawn through fabricated intermediate notes.
+    state.smoothedMidi=null;state.recentRawMidi=[];
   }
+  state.jumpCandidate=null;state.jumpCandidateCount=0;state.trackedMidi=rawMidi;
+  const candidate=rawMidi;
   state.recentRawMidi.push(candidate);
   if (state.recentRawMidi.length > 9) state.recentRawMidi.shift();
   if (state.smoothedMidi == null) state.smoothedMidi = candidate;
@@ -170,8 +182,11 @@ function stabilizeMidi(rawMidi) {
 }
 
 function updateNoiseModel(db, hasReliablePitch) {
-  const likelyNoise = !hasReliablePitch || db < state.noiseFloor + 4;
-  if (likelyNoise && Number.isFinite(db)) {
+  if(hasReliablePitch&&Number.isFinite(db)){
+    // Clean periodic voice must not keep teaching the gate that the voice is
+    // background noise. Release a gate poisoned by earlier unresolved voice.
+    if(db>=-66&&db<state.gateDb)state.noiseFloor=Math.min(state.noiseFloor,db-10);
+  } else if (Number.isFinite(db)) {
     const a = db > state.noiseFloor ? 0.012 : 0.05;
     state.noiseFloor = (1-a)*state.noiseFloor + a*db;
     state.noiseFloor = clamp(state.noiseFloor, -95, -28);
@@ -313,7 +328,7 @@ function onPitchResult(result) {
     pushHistory(null, now);
     return;
   }
-  const hasCandidate = rawFreq != null && conf >= 0.58;
+  const hasCandidate = rawFreq != null && rawFreq>=65 && rawFreq<=1200 && conf >= 0.58;
   updateNoiseModel(db, hasCandidate);
   const audible = db >= state.gateDb;
   const reliable = hasCandidate && audible;
@@ -326,20 +341,56 @@ function onPitchResult(result) {
     return;
   }
   const rawMidi = window.PitchCore.frequencyToMidi(rawFreq);
-  const midi = stabilizeMidi(rawMidi);
+  const midi = stabilizeMidi(rawMidi,now);
+  if(!Number.isFinite(midi)){
+    pushHistory(null,now);clearPitchUI('급격한 음정 변화 확인 중');
+    emit('gap',{now,db,confidence:conf,audible,reason:'pitch-jump'});drawGraph();return;
+  }
   const displayFrequency = midiToFrequency(midi);
   updatePitchUI(midi, displayFrequency, conf, now);
   pushHistory(midi, now);
   emit('pitch', { now, midi, frequency:displayFrequency, rawFrequency:rawFreq, confidence:conf, db, gateDb:state.gateDb });
   drawGraph();
 }
+function createPitchWorker(recovery=false) {
+  const old=state.worker;state.worker=null;
+  try{old?.terminate();}catch(_){}
+  state.workerBusy=false;state.workerSentAt=null;state.workerRestartAt=null;
+  if(recovery&&++state.workerFailureStreak>3)throw new Error('음정 분석 작업이 반복해서 응답하지 않습니다.');
+  const worker=new Worker(`./pitch-worker.js?v=${APP_VERSION}`);
+  state.worker=worker;
+  const fail=error=>{
+    if(state.worker!==worker)return;
+    state.workerBusy=false;state.workerSentAt=null;state.workerRestartAt=performance.now()+250;
+    state.lastError=String(error?.message||'음정 분석 작업 오류');
+  };
+  worker.onmessage=e=>{
+    if(state.worker!==worker)return;
+    state.workerBusy=false;state.workerSentAt=null;
+    if(e.data?.type==='result'){state.workerFailureStreak=0;onPitchResult(e.data);}
+    else if(e.data?.type==='error')fail(e.data);
+  };
+  worker.onerror=fail;worker.onmessageerror=fail;
+  if(recovery){state.workerRestarts++;resetPitchTracking();}
+}
 function analyzeFrame() {
-  if (!state.measuring || state.workerBusy || !state.analyser || !state.worker) return;
+  if (!state.measuring || !state.analyser) return;
   if (state.audioContext?.state === 'suspended') return;
-  const buf = new Float32Array(state.analyser.fftSize);
-  state.analyser.getFloatTimeDomainData(buf);
-  state.workerBusy = true;
-  state.worker.postMessage({ type:'analyze', samples:buf, sampleRate:state.audioContext.sampleRate, options:{minHz:65,maxHz:1200,threshold:0.16} }, [buf.buffer]);
+  const now=performance.now();
+  if(state.workerRestartAt!=null&&now<state.workerRestartAt)return;
+  try{
+    const timedOut=state.workerBusy&&state.workerSentAt!=null&&now-state.workerSentAt>WORKER_TIMEOUT_MS;
+    if(state.workerRestartAt!=null||timedOut||!state.worker)createPitchWorker(true);
+    if(state.workerBusy)return;
+    const buf = new Float32Array(state.analyser.fftSize);
+    state.analyser.getFloatTimeDomainData(buf);
+    state.workerBusy = true;state.workerSentAt=now;
+    try{state.worker.postMessage({ type:'analyze', samples:buf, sampleRate:state.audioContext.sampleRate, options:{minHz:65,maxHz:1200,threshold:0.16} }, [buf.buffer]);}
+    catch(error){state.workerBusy=false;state.workerSentAt=null;state.workerRestartAt=now+250;state.lastError=String(error?.message||error);}
+  }catch(error){
+    state.lastError=String(error?.message||error);stopMeasurement('analysis-error');
+    showError('음정 분석을 복구하지 못해 측정을 종료했습니다. 측정 시작을 다시 눌러 주세요.');
+  }
 }
 function withTimeout(promise, ms, label='작업') {
   return Promise.race([promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error(`${label} 시간 초과`)),ms))]);
@@ -390,12 +441,7 @@ async function startMeasurement() {
     state.analyser.fftSize = 4096;
     state.analyser.smoothingTimeConstant = 0;
     state.source.connect(state.analyser);
-    state.worker = new Worker('./pitch-worker.js');
-    state.worker.onmessage = e => {
-      if (e.data?.type === 'result') onPitchResult(e.data);
-      else if (e.data?.type === 'error') { state.workerBusy=false; console.error(e.data.message); }
-    };
-    state.worker.onerror = e => { state.workerBusy=false; console.error('pitch worker',e); };
+    state.workerFailureStreak=0;createPitchWorker();
     const track = state.stream.getAudioTracks?.()[0];
     if (track) track.onended = () => {
       if (!state.measuring) return;
@@ -406,7 +452,7 @@ async function startMeasurement() {
     state.measuring = true;
     state.captureStartedAt = Date.now();
     state.errorWindow = []; state.errorOnset = null; state.errorLastPitch = null;
-    state.smoothedMidi = null; state.recentRawMidi = []; state.pitchWindow = [];
+    resetPitchTracking();state.workerRestarts=0;state.rejectedPitchJumps=0;
     state.octaveCandidate = null; state.octaveCandidateCount = 0; state.lastGood = null;
     state.workerBusy = false;
     state.noiseFloor = -72;
@@ -448,7 +494,7 @@ function stopMeasurement(reason='user') {
 function cleanupAudio(markStopped=true) {
   if (state.timer) { clearInterval(state.timer); state.timer=null; }
   try { state.worker?.terminate(); } catch (_) {}
-  state.worker=null; state.workerBusy=false;
+  state.worker=null; state.workerBusy=false;state.workerSentAt=null;state.workerRestartAt=null;
   try { state.source?.disconnect(); } catch (_) {}
   state.source=null;
   if (state.stream) {
@@ -460,6 +506,7 @@ function cleanupAudio(markStopped=true) {
   if (markStopped) state.measuring=false;
 }
 function resetSession() {
+  resetPitchTracking();
   state.errorWindow=[];state.errorOnset=null;state.errorLastPitch=null;
   state.history=[]; state.frozenHistory=[]; state.frozen=false; state.recentRawMidi=[]; state.pitchWindow=[]; state.smoothedMidi=null;
   state.targetExactMs=0; state.targetStreakMs=0; state.targetVoicedMs=0; state.lastTargetTick=null; state.lastGood=null;
@@ -582,6 +629,6 @@ document.addEventListener('DOMContentLoaded',init);
 window.VocalScope={
   APP_VERSION,BUILD_ID,state,noteFromMidi,midiToFrequency,setTarget,startMeasurement,stopMeasurement,playReferenceTone,showError,requestWakeLock,recoverForeground,
   getCurrentStream:()=>state.stream,
-  clearDisplayedPitch:()=>{state.history=[];state.frozenHistory=[];state.smoothedMidi=null;state.recentRawMidi=[];state.errorWindow=[];state.errorOnset=null;state.errorLastPitch=null;clearPitchUI();drawGraph();},
-  getDiagnostics:()=>({version:APP_VERSION,build:BUILD_ID,measuring:state.measuring,targetMidi:state.targetMidi,noiseFloor:state.noiseFloor,gateDb:state.gateDb,audioContextState:state.audioContext?.state||'none',trackState:state.stream?.getAudioTracks?.()[0]?.readyState||'none',fallbackConstraints:state.usedFallbackConstraints,lastError:state.lastError})
+  clearDisplayedPitch:()=>{state.history=[];state.frozenHistory=[];resetPitchTracking();state.errorWindow=[];state.errorOnset=null;state.errorLastPitch=null;clearPitchUI();drawGraph();},
+  getDiagnostics:()=>({version:APP_VERSION,build:BUILD_ID,measuring:state.measuring,targetMidi:state.targetMidi,noiseFloor:state.noiseFloor,gateDb:state.gateDb,workerBusy:state.workerBusy,workerRestarts:state.workerRestarts,rejectedPitchJumps:state.rejectedPitchJumps,audioContextState:state.audioContext?.state||'none',trackState:state.stream?.getAudioTracks?.()[0]?.readyState||'none',fallbackConstraints:state.usedFallbackConstraints,lastError:state.lastError})
 };
