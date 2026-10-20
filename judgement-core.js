@@ -85,9 +85,14 @@
     if (!['screen', 'beat'].includes(first)) throw new Error('블록 순서를 선택해 주세요.');
     return first === 'screen' ? ['screen', 'beat'] : ['beat', 'screen'];
   }
-  function buildRounds(date, notes, first) {
+  function correctionMethods(date, mode = 'screen_only') {
     if (!validDate(date)) throw new Error('유효한 날짜를 YYYY-MM-DD로 입력해 주세요.');
-    const methods = blockMethods(first);
+    if (mode === 'screen_only') return ['screen', 'screen'];
+    if (mode !== 'compare') throw new Error('교정 방식 모드를 선택해 주세요.');
+    return blockMethods(Number(date.slice(-2)) % 2 ? 'beat' : 'screen');
+  }
+  function buildRounds(date, notes, mode = 'screen_only') {
+    const methods = correctionMethods(date, mode);
     if (notes.length !== 24) throw new Error('목표음을 순서대로 정확히 24개 붙여 넣어 주세요.');
     return notes.map((targetMidi, i) => ({ block: i < 12 ? 1 : 2, method: methods[i < 12 ? 0 : 1], trial: i + 1, targetNote: noteName(targetMidi), targetMidi }));
   }
@@ -102,9 +107,12 @@
   }
   function exportDay(records, date) {
     if (!validDate(date)) throw new Error('내보낼 날짜를 입력해 주세요.');
+    const sessions = records.filter(s => s.training?.dayId === date).slice().sort((a, b) => a.createdAt - b.createdAt);
+    const level = median(sessions.filter(s => s.training.stage === 'initial').map(s => s.levelDb));
     return { schema: 'vocal-scope-training', schemaVersion: 1, dayId: date,
-      sessions: records.filter(s => s.training?.dayId === date).slice().sort((a, b) => a.createdAt - b.createdAt) };
+      initialLevelDbMedian: Number.isFinite(level) ? Math.round(level * 100) / 100 : null,
+      sessions };
   }
   return { WINDOW, BLOCK_LABELS, STAGE_LABELS, median, windowMedian, actualDirection,
-    validJudgement, judgementCorrect, shouldShowFeedback, validDate, noteName, parseNotes, blockMethods, buildRounds, training, label, exportDay };
+    validJudgement, judgementCorrect, shouldShowFeedback, validDate, noteName, parseNotes, blockMethods, correctionMethods, buildRounds, training, label, exportDay };
 });

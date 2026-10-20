@@ -196,6 +196,13 @@ canvas { width:100%; height:100%; display:block; }
 .judgement-countdown { min-height:28px; color:var(--accent2); font-size:20px; font-weight:700; }
 .judgement-countdown:empty { display:none; }
 .judgement-pitch-lock { margin:12px 0; border:1px dashed rgba(124,156,255,.35); border-radius:13px; padding:15px; text-align:center; color:#b5c7ef; font-size:13px; background:rgba(124,156,255,.055); }
+.judgement-level-settings { margin-top:14px; }
+.judgement-level-settings .judgement-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.judgement-level-meter { margin:12px 0; }
+.judgement-level-track { position:relative; height:20px; margin-top:7px; border-radius:6px; background:rgba(255,255,255,.07); overflow:hidden; }
+.judgement-level-fill { position:absolute; inset:0 auto 0 0; width:0%; background:#778396; transition:width 80ms linear; }
+.judgement-level-fill.in-range { background:#52d6a0; }
+.judgement-level-band { position:absolute; top:0; bottom:0; border:2px solid #a2dfc5; background:rgba(101,225,194,.13); pointer-events:none; min-width:2px; }
 .judgement-result, .session-judgement-panel { margin:12px 0; padding:14px; border:1px solid rgba(101,225,194,.2); border-radius:13px; background:rgba(101,225,194,.055); white-space:pre-wrap; line-height:1.7; font-size:13px; color:#d7f4ec; }
 .judgement-live { margin:12px 0; padding:13px; border-radius:12px; background:rgba(101,225,194,.08); color:var(--accent2); font-size:15px; line-height:1.6; }
 .judgement-report p { color:#cfdaed; font-size:12px; line-height:1.7; }

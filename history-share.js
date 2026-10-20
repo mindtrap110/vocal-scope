@@ -107,6 +107,7 @@
     const mode = modeOf(session);
     const tech = techniqueFor(session);
     const lines = [`${index + 1}. ${dateTime(session?.createdAt)} · ${mode}`];
+    if (Number.isFinite(session?.levelDb)) lines.push(`   입력 크기 · 0.5~2.5초: ${session.levelDb.toFixed(1)} dBFS${session.training?.mixedWithReference ? ' · 기준음 포함' : ''}`);
 
     if (mode === '판단 보정') {
       const t = session.training, j = t.judgement;
@@ -238,6 +239,7 @@
         sustainCents: '각 발성의 0.5~1.5초 중앙 오차',
         driftCentsPerSec: '발성을 유지하는 동안 초당 음정 변화',
         assessment: '첫 유효 음정 검출을 기준으로 500~2500ms의 목표음 대비 부호 있는 오차 중앙값. status=ok만 유효. 짧거나 끊긴 구간은 medianCents=null',
+        levelDb: '첫 유효 음정 검출 후 500~2500ms 입력 PCM의 RMS를 dBFS로 계산한 값(소수 1자리). 짧은 세션은 해당 구간의 녹음된 부분만 사용. 해당 구간의 입력이 없거나 무음이면 null. mixedWithReference=true는 기준음 포함',
         training: '연습 날짜·dayId·블록·회차·단계(initial=②/correction=교정/retry=재시도)·사용자 판단(방향/크기/확신도)·맥놀이 Y/N·피드백 단계·연결 세션 ID',
         correctionWarning: 'training.stage=correction은 성과 평가 제외. beat 교정은 마이크 꺼짐과 빈 points, screen 교정은 mixedWithReference=true인 음정 데이터. 기준음을 끈 retry로 비교',
         judgementRule: '실제 |오차|≤25c는 match. 그 밖에는 high/low 방향이 맞아야 정답. 판단은 initial에만 저장. correction/retry/discarded도 내보내기에 포함',

@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.5.5';
-const BUILD_ID = '2026-10-16-pitch-recovery';
+const APP_VERSION = '3.7.0';
+const BUILD_ID = '2026-10-19-input-level';
 const WORKER_TIMEOUT_MS = 1500;
 
 const state = {
@@ -377,13 +377,17 @@ function analyzeFrame() {
   if (!state.measuring || !state.analyser) return;
   if (state.audioContext?.state === 'suspended') return;
   const now=performance.now();
-  if(state.workerRestartAt!=null&&now<state.workerRestartAt)return;
   try{
+    const buf = new Float32Array(state.analyser.fftSize);
+    state.analyser.getFloatTimeDomainData(buf);
+    // Read level independently of pitch confidence and before transferring PCM.
+    emit('input-level', { now, samples:buf, sampleRate:state.audioContext.sampleRate,
+      frameEnd:Math.round(state.audioContext.currentTime * state.audioContext.sampleRate),
+      db:window.VocalLevelCore.frameDb(buf) });
+    if(state.workerRestartAt!=null&&now<state.workerRestartAt)return;
     const timedOut=state.workerBusy&&state.workerSentAt!=null&&now-state.workerSentAt>WORKER_TIMEOUT_MS;
     if(state.workerRestartAt!=null||timedOut||!state.worker)createPitchWorker(true);
     if(state.workerBusy)return;
-    const buf = new Float32Array(state.analyser.fftSize);
-    state.analyser.getFloatTimeDomainData(buf);
     state.workerBusy = true;state.workerSentAt=now;
     try{state.worker.postMessage({ type:'analyze', samples:buf, sampleRate:state.audioContext.sampleRate, options:{minHz:65,maxHz:1200,threshold:0.16} }, [buf.buffer]);}
     catch(error){state.workerBusy=false;state.workerSentAt=null;state.workerRestartAt=now+250;state.lastError=String(error?.message||error);}

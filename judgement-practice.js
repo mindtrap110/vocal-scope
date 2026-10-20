@@ -2,7 +2,8 @@
 (() => {
   const KEY = 'vocalScopeIntegratedRecordingV1';
   const MODE_KEY = 'vocalScopeTrainingModeV1';
-  const ORDER_KEY = 'vocalScopeTrainingFirstMethodV1';
+  const CORRECTION_KEY = 'vocalScopeCorrectionModeV1';
+  const LEVEL_KEY = 'vocalScopeLevelSettingsV1';
   const C = window.VocalJudgementCore;
   const $ = id => document.getElementById(id);
   const V = () => window.VocalScope;
@@ -10,6 +11,8 @@
   const T = () => window.VocalScopeReferenceTone;
   let day = null;
   let enabled = false, normalTarget = null;
+  let preferredCorrectionMode = 'screen_only';
+  let levelSettings = { targetDb: null, toleranceDb: 4 }, liveLevelDb = null;
   const runtime = { context: null, stage: 'initial', onset: null, timer: null, startedAt: null, token: 0, beatStart: null, preparing: false };
   const round = () => day?.rounds?.[day.cursor];
   const current = () => H().readSessions().find(s => s.id === day?.pendingId);
@@ -18,9 +21,37 @@
   const show = (id, yes) => $(id)?.classList.toggle('hidden', !yes);
   const cents = n => Number.isFinite(n) ? `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(1)}¢` : '유효 결과 없음';
   function error(text = '') { $('judgementActionError').textContent = text; }
+  function updateLevelMeter() {
+    const visible=active()&&day.step==='capturing'&&['initial','retry'].includes(runtime.stage);
+    show('judgementLevelMeter',visible);
+    const {targetDb,toleranceDb}=levelSettings,hasTarget=Number.isFinite(targetDb);
+    const min=Math.min(-80,hasTarget?targetDb-toleranceDb-8:-80);
+    const pct=db=>Math.max(0,Math.min(100,(db-min)/-min*100));
+    const meter=$('judgementLevelMeter'),fill=$('judgementLevelFill'),band=$('judgementLevelBand');
+    const db=visible?liveLevelDb:null;
+    fill.style.width=`${Number.isFinite(db)?pct(db):0}%`;
+    fill.classList.toggle('in-range',hasTarget&&Number.isFinite(db)&&Math.abs(db-targetDb)<=toleranceDb);
+    show('judgementLevelBand',hasTarget);
+    if(hasTarget){band.style.left=`${pct(targetDb-toleranceDb)}%`;band.style.width=`${pct(targetDb+toleranceDb)-pct(targetDb-toleranceDb)}%`;}
+    meter.setAttribute('aria-valuemin',String(min));
+    if(Number.isFinite(db)){meter.setAttribute('aria-valuenow',String(Math.max(min,Math.min(0,db))));meter.setAttribute('aria-valuetext',`${db.toFixed(1)} dBFS`);}
+    else{meter.removeAttribute('aria-valuenow');meter.setAttribute('aria-valuetext','입력 대기');}
+    $('judgementLevelRange').textContent=hasTarget?`목표 범위 ${(targetDb-toleranceDb).toFixed(1)} ~ ${(targetDb+toleranceDb).toFixed(1)} dBFS`:'목표 미설정 · 마이크 입력 기준 dBFS(보통 음수)';
+  }
+  function saveLevelSettings() {
+    const target=$('judgementLevelTarget'),tolerance=$('judgementLevelTolerance');
+    for(const input of [target,tolerance])if(!input.checkValidity()){input.reportValidity();return;}
+    levelSettings={targetDb:target.value===''?null:Number(target.value),toleranceDb:Number(tolerance.value)};
+    try{localStorage.setItem(LEVEL_KEY,JSON.stringify(levelSettings));}catch(_){error('목표 크기 설정을 저장하지 못했습니다.');}
+    updateLevelMeter();
+  }
   function persist() { try { localStorage.setItem(KEY, JSON.stringify(day)); return true; } catch (_) { error('진행을 저장하지 못했습니다.'); return false; } }
   function clearTimer() { clearInterval(runtime.timer); clearTimeout(runtime.timer); runtime.timer = null; }
   function localDate() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+  function dayCorrectionMode() {
+    if(['screen_only','compare'].includes(day?.correctionMode))return day.correctionMode;
+    return day?.rounds?.every(r=>r.method==='screen')?'screen_only':'compare';
+  }
   function leaveOtherPractice() {
     window.VocalPhrasePractice?.deactivate?.({restoreTarget:true});
     if (window.VocalTrainer?.isActive?.()) window.VocalTrainer.stop();
@@ -39,31 +70,34 @@
   }
   function updateOrder() {
     const date = $('judgementDate').value;
-    const methods = C.blockMethods($('judgementFirstMethod').value);
-    $('judgementBlockOrder').textContent = `블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]} · 날짜와 무관하게 선택한 순서로 진행합니다.`;
+    const existing=day?.dayId===date;
+    const selector=$('judgementCorrectionMode');
+    if(!active())selector.value=existing?dayCorrectionMode():preferredCorrectionMode;
+    const mode=selector.value;
+    const legacy=existing&&!day.correctionMode;
+    const methods=legacy?[day.rounds[0].method,day.rounds[12].method]:C.validDate(date)?C.correctionMethods(date,mode):null;
+    const detail=mode==='screen_only'?'날짜와 무관하게 두 블록 모두 화면 교정':'입력 날짜의 홀짝으로 교정 방식 배정';
+    $('judgementBlockOrder').textContent=methods?`블록 1 ${C.BLOCK_LABELS[methods[0]]} → 블록 2 ${C.BLOCK_LABELS[methods[1]]} · ${legacy?'기존 훈련의 순서 유지':detail}`:'연습 날짜를 입력하세요.';
     $('trainingExportDate').value = date;
     if(day?.step==='done')render();
   }
-  function changeOrder() {
-    const selected=$('judgementFirstMethod').value;
-    if($('judgementFirstMethod').disabled){$('judgementFirstMethod').value=day?.rounds[0].method||selected;return;}
-    if(active()&&selected!==day.rounds[0].method){
-      const rec=current();
-      if(rec?.training.stage==='initial'&&!rec.training.judgement&&!H().updateTraining(rec.id,{stage:'discarded',judgement:null,autoScore:null})){
-        $('judgementFirstMethod').value=day.rounds[0].method;return error('이전 시도를 보존하지 못했습니다.');
-      }
-      runtime.token++;clearTimer();T().stop();runtime.context=null;runtime.stage='initial';runtime.onset=null;runtime.startedAt=null;
+  function changeCorrectionMode() {
+    const selector=$('judgementCorrectionMode'),selected=selector.value;
+    if(selector.disabled){selector.value=day?dayCorrectionMode():preferredCorrectionMode;return;}
+    if(active()&&selected!==dayCorrectionMode()){
       day.rounds=C.buildRounds(day.dayId,day.rounds.map(r=>r.targetMidi),selected);
-      day.pendingId=null;day.initialSessionId=null;day.step='referenceReady';
-      persist();clearAnswer();V().clearDisplayedPitch();
+      day.correctionMode=selected;
+      persist();
     }
-    try{localStorage.setItem(ORDER_KEY,selected);}catch(_){}
+    preferredCorrectionMode=selected;
+    try{localStorage.setItem(CORRECTION_KEY,selected);}catch(_){}
     error();updateOrder();render();
   }
   function configure() {
     const date = $('judgementDate').value;
-    const rounds = C.buildRounds(date, C.parseNotes($('judgementTargets').value), $('judgementFirstMethod').value);
-    day = { dayId: date, rounds, cursor: 0, feedbackLevel: Number($('judgementFeedback').value), step: 'referenceReady', pendingId: null, initialSessionId: null };
+    const correctionMode=$('judgementCorrectionMode').value;
+    const rounds = C.buildRounds(date, C.parseNotes($('judgementTargets').value), correctionMode);
+    day = { dayId: date, correctionMode, rounds, cursor: 0, feedbackLevel: Number($('judgementFeedback').value), step: 'referenceReady', pendingId: null, initialSessionId: null };
     leaveOtherPractice();
     persist();
   }
@@ -82,6 +116,7 @@
   }
   async function capture(stage) {
     clearTimer(); T().stop(); error(); clearAnswer();
+    liveLevelDb=null;
     runtime.stage=stage; runtime.onset=null; runtime.startedAt=null; runtime.context=context(stage); runtime.preparing=true; day.pendingId=null;
     day.step=stage==='correction'?'screenCorrection':'capturing';
     V().setTarget(round().targetMidi,{transient:true}); render(); persist();
@@ -183,7 +218,8 @@
     show('judgementSetup',enabled&&!active()); show('judgementActive',enabled&&!!day);
     show('judgementFeedbackField',enabled);show('trainingExportControls',enabled);show('judgementActionError',enabled);
     show('judgementOrderControls',enabled);show('judgementOrderHelp',active());
-    $('judgementFirstMethod').disabled=runtime.preparing||V().state.measuring||['referencePlaying','beatCorrection'].includes(day?.step)||day?.step==='done'&&$('judgementDate').value===day.dayId;
+    show('judgementLevelControls',enabled);updateLevelMeter();
+    $('judgementCorrectionMode').disabled=runtime.preparing||V().state.measuring||active()&&day.step!=='referenceReady'||day?.step==='done'&&$('judgementDate').value===day.dayId;
     show('recordingSaveControl',!enabled);show('resetBtn',!enabled);
     const button=$('measureBtn'),r=round(),rec=current(),step=day?.step;
     if(!enabled){
@@ -194,9 +230,10 @@
     }
     $('judgementBadge').textContent=!day?'설정':step==='done'?'완료':`${r.trial}/24`;
     if(r){$('judgementLabel').textContent=C.label(context(step==='retryReady'||step==='retryResult'||step==='retryInvalid'?'retry':step?.includes('Correction')||step==='beatAnswer'?'correction':'initial'),r.targetMidi);$('judgementTarget').textContent=r.targetNote;$('judgementProgress').textContent=`블록 ${r.block} · ${C.BLOCK_LABELS[r.method]}`;}
-    show('judgementAnswerForm',step==='judgement');show('judgementBeatField',step==='beatAnswer');show('judgementCorrectionLive',step==='screenCorrection');
+    show('judgementAnswerForm',step==='judgement');show('judgementBeatField',step==='beatAnswer'&&r?.method==='beat');show('judgementCorrectionLive',step==='screenCorrection');
     show('judgementPitchLock',active()&&step!=='screenCorrection');show('judgementResult',step==='initialResult'||step==='retryResult');
     $('judgementResult').textContent=step==='initialResult'?`오차 중앙값: ${cents(rec?.assessment.medianCents)}\n판단 ${rec?.training.autoScore?.correct?'정답':'오답'} (±25¢ 기준)`:step==='retryResult'?`재시도 오차 중앙값: ${cents(rec?.assessment.medianCents)}`:'';
+    if(['initialResult','retryResult'].includes(step)&&Number.isFinite(rec?.levelDb))$('judgementResult').textContent+=`\n입력 크기: ${rec.levelDb.toFixed(1)} dBFS`;
     const texts={referenceReady:'기준음 듣기',referencePlaying:'기준음 재생 중',initialReady:'② 3초 부르기',capturing:'녹음 정지',judgement:'결과 보기',initialResult:rec&&Math.abs(rec.assessment.medianCents)>25?`${C.BLOCK_LABELS[r.method]} 교정 시작`:'다음 회차',beatCorrection:'기준음 끄기',beatAnswer:'Y/N 저장',screenCorrection:'교정 녹음 정지',retryReady:'재시도 · 3초 녹음',retryResult:'다음 회차',initialInvalid:'다시 부르기',retryInvalid:'재시도 다시 녹음',done:'새 날짜·목표음으로 녹음 준비'};
     button.textContent=texts[step]||'기준음 듣기 · 녹음 준비';
     button.disabled=runtime.preparing||step==='referencePlaying'||step==='judgement'&&!C.validJudgement(answer())||step==='beatAnswer'&&!['Y','N'].includes($('judgementBeatDetected').value)||step==='screenCorrection'&&runtime.startedAt==null;
@@ -208,10 +245,15 @@
   function restore(){
     try{day=JSON.parse(localStorage.getItem(KEY)||'null');}catch(_){day=null;}
     if(!day?.rounds?.length){day=null;return;}
-    $('judgementFirstMethod').value=day.rounds[0].method;
+    $('judgementCorrectionMode').value=dayCorrectionMode();
     $('judgementDate').value=day.dayId;$('judgementTargets').value=day.rounds.map(r=>r.targetNote).join(' ');$('judgementFeedback').value=String(day.feedbackLevel);
     const interrupted=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.trial===day.cursor+1&&['initial','retry'].includes(s.training.stage)&&!s.training.judgement&&s.assessment?.status!=='ok');
-    if(interrupted){const stage=interrupted.training.stage;H().updateTraining(interrupted.id,{stage:'discarded',judgement:null,autoScore:null});day.pendingId=interrupted.id;day.initialSessionId=stage==='retry'?interrupted.training.initialSessionId:interrupted.id;day.step=stage==='retry'?'retryInvalid':'initialInvalid';}
+    if(interrupted){
+      const stage=interrupted.training.stage;
+      // Recover the UI without rewriting a previous date's stored record.
+      if(day.dayId>=localDate())H().updateTraining(interrupted.id,{stage:'discarded',judgement:null,autoScore:null});
+      day.pendingId=interrupted.id;day.initialSessionId=stage==='retry'?interrupted.training.initialSessionId:interrupted.id;day.step=stage==='retry'?'retryInvalid':'initialInvalid';
+    }
     const pending=H().readSessions().find(s=>s.training?.dayId===day.dayId&&s.training.stage==='initial'&&!s.training.judgement&&s.assessment?.status==='ok');
     if(pending){day.cursor=pending.training.trial-1;day.pendingId=pending.id;day.initialSessionId=pending.id;day.step='judgement';}
     else if(['capturing','screenCorrection','referencePlaying'].includes(day.step)){const rec=current();day.step=rec?.training.stage==='correction'?'retryReady':rec?.training.stage==='retry'&&rec.assessment?.status==='ok'?'retryResult':day.initialSessionId?'retryReady':'referenceReady';}
@@ -220,7 +262,10 @@
   }
   function init(){
     const feedback=$('judgementFeedback').closest('label');feedback.classList.add('judgement-wide-field');$('judgementSetup').before(feedback);
-    try{const first=localStorage.getItem(ORDER_KEY);if(['screen','beat'].includes(first))$('judgementFirstMethod').value=first;}catch(_){}
+    try{const mode=localStorage.getItem(CORRECTION_KEY);if(['screen_only','compare'].includes(mode))preferredCorrectionMode=mode;}catch(_){}
+    $('judgementCorrectionMode').value=preferredCorrectionMode;
+    try{const saved=JSON.parse(localStorage.getItem(LEVEL_KEY)||'null');if(saved&&Number.isFinite(saved.toleranceDb)&&saved.toleranceDb>=0&&(saved.targetDb===null||Number.isFinite(saved.targetDb)&&saved.targetDb>=-160&&saved.targetDb<=0))levelSettings={targetDb:saved.targetDb,toleranceDb:saved.toleranceDb};}catch(_){}
+    $('judgementLevelTarget').value=levelSettings.targetDb??'';$('judgementLevelTolerance').value=String(levelSettings.toleranceDb);
     $('judgementDate').value=localDate();restore();
     try{const mode=JSON.parse(localStorage.getItem(MODE_KEY)||'null');enabled=mode?.enabled===true;normalTarget=Number.isFinite(mode?.normalTarget)?mode.normalTarget:null;}catch(_){enabled=false;}
     if(enabled){leaveOtherPractice();V().clearDisplayedPitch();}
@@ -228,7 +273,8 @@
     window.dispatchEvent(new CustomEvent('vs:training-mode-change',{detail:{enabled}}));
     $('trainingEnabledToggle').addEventListener('change',e=>setEnabled(e.target.checked));
     $('judgementDate').addEventListener('change',updateOrder);
-    $('judgementFirstMethod').addEventListener('change',changeOrder);
+    $('judgementCorrectionMode').addEventListener('change',changeCorrectionMode);
+    ['judgementLevelTarget','judgementLevelTolerance'].forEach(id=>$(id).addEventListener('change',saveLevelSettings));
     $('judgementSetup').addEventListener('submit',e=>{e.preventDefault();handleButton();});
     $('judgementAnswerForm').addEventListener('submit',e=>{e.preventDefault();if(C.validJudgement(answer()))submitAnswer();});
     ['judgementDirection','judgementSize','judgementConfidence'].forEach(id=>$(id).addEventListener('change',updateAnswer));
@@ -236,6 +282,7 @@
     $('judgementFeedback').addEventListener('change',()=>{if(day){day.feedbackLevel=Number($('judgementFeedback').value);persist();}});
     $('trainingExportBtn').addEventListener('click',()=>window.VocalHistoryShare.exportTrainingDay($('trainingExportDate').value));
     window.addEventListener('vs:pitch',e=>{if(!runtime.context)return;if(runtime.onset==null)runtime.onset=e.detail.now;if(day.step==='screenCorrection')$('judgementCorrectionLive').textContent=`교정 실시간: ${cents((e.detail.midi-round().targetMidi)*100)} · 평가 제외`;});
+    window.addEventListener('vs:input-level',e=>{liveLevelDb=e.detail.db;updateLevelMeter();});
     window.addEventListener('vs:history-saved',onSaved);window.addEventListener('vs:measurement-stop',onStop);
     window.addEventListener('vs:visibility',e=>{if(e.detail.hidden)interrupt();});window.addEventListener('pagehide',interrupt);
     window.addEventListener('vs:history-cleared',()=>{interrupt();day=null;localStorage.removeItem(KEY);render();});
