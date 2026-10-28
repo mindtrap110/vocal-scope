@@ -177,14 +177,15 @@
       ? `전체 ${selected.length}개`
       : `전체 ${sessions.length}개 중 최근 ${selected.length}개`;
     const hasJudgements = selected.some(s => s.training);
+    const hasV3a = selected.some(s => s.training?.protocol === 'v3a');
 
     const lines = [
       '# 보컬 스코프 연습 기록',
       '',
       '아래 기록을 보컬 코치처럼 분석해 주세요.',
       '- 반복되는 강점과 문제 경향을 구분해 주세요.',
-      hasJudgements ? '- 판단 보정 계획의 구조를 유지하며 블록별 판단 정확도·‘맞음’ 정밀도·확신도별 정확도와 맥놀이/화면 재시도를 비교해 주세요.' : '- 가장 먼저 교정할 항목 1~2개와 구체적인 연습법을 제안해 주세요.',
-      hasJudgements ? '- 교정 전 오차의 분포와 맥놀이 Y/N을 함께 보고, 재시도 ±25 cent 성공률을 비교해 주세요.' : '- 다음 연습에서 확인할 수치와 10분 루틴을 만들어 주세요.',
+      hasV3a ? '- v3a는 화면 1블록 12회입니다. 판단 정확도·확신도별 정확도를 분석해 주세요.' : hasJudgements ? '- 판단 보정 계획의 구조를 유지하며 블록별 판단 정확도·‘맞음’ 정밀도·확신도별 정확도와 맥놀이/화면 재시도를 비교해 주세요.' : '- 가장 먼저 교정할 항목 1~2개와 구체적인 연습법을 제안해 주세요.',
+      hasV3a ? '- correctionIndex로 교정한 initial·correction·retry를 연결하고, 교정하지 않은 회차와 구분해 주세요.' : hasJudgements ? '- 교정 전 오차의 분포와 맥놀이 Y/N을 함께 보고, 재시도 ±25 cent 성공률을 비교해 주세요.' : '- 다음 연습에서 확인할 수치와 10분 루틴을 만들어 주세요.',
       '- 데이터가 부족한 결론은 추정이라고 표시해 주세요.',
       '',
       '해석 주의:',
@@ -245,7 +246,7 @@
         judgementRule: '실제 |오차|≤25c는 match. 그 밖에는 high/low 방향이 맞아야 정답. 판단은 initial에만 저장. correction/retry/discarded도 내보내기에 포함',
         phraseWarning: 'plan.type이 phrase인 기록은 기준 멜로디가 없으므로 멜로디 정확도로 평가하지 않음',
       },
-      suggestedAnalysis: records.some(s => s.training)
+      suggestedAnalysis: records.some(s => s.training?.protocol === 'v3a') ? 'v3a는 화면 1블록 12회입니다. correctionIndex로 연결한 교정 전후를 분석하고, 교정하지 않은 회차와 구분하세요. correction은 기준음 포함·평가 제외이며 성과는 retry로 비교하세요.' : records.some(s => s.training)
         ? '판단 보정 계획의 구조를 유지하며 블록별 판단 정확도·맞음 정밀도·확신도별 정확도를 분석하세요. 교정 전 오차와 맥놀이 Y/N을 고려해 두 블록의 재시도 절대 오차 중앙값·±25 cent 성공률을 비교하고, 측정/사용자 보고/추정을 구분하세요.'
         : '반복되는 강점과 문제 경향을 찾고, 교정 우선순위 1~2개와 다음 10분 연습 루틴을 제안해 주세요. 근거가 부족한 결론은 추정이라고 표시해 주세요.',
       recordCount: records.length,

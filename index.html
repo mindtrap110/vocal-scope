@@ -9,8 +9,8 @@
   <meta name="apple-mobile-web-app-title" content="보컬 스코프" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
-  <link rel="stylesheet" href="./styles.css?v=3.7.0" />
-  <link rel="stylesheet" href="./history.css?v=3.7.0" />
+  <link rel="stylesheet" href="./styles.css?v=3.8.0" />
+  <link rel="stylesheet" href="./history.css?v=3.8.0" />
   <title>보컬 스코프</title>
 </head>
 <body>
@@ -45,9 +45,15 @@
       </div>
       <p id="judgementModeHelp" class="judgement-note">훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.</p>
       <div id="judgementOrderControls" class="hidden">
-        <label class="judgement-wide-field">교정 방식 모드<select id="judgementCorrectionMode"><option value="screen_only">화면만</option><option value="compare">비교</option></select></label>
         <p id="judgementBlockOrder" class="judgement-note"></p>
-        <p id="judgementOrderHelp" class="judgement-note hidden">모드는 회차 사이에 변경할 수 있습니다. 저장된 기록은 변경하지 않습니다.</p>
+        <p id="judgementOrderHelp" class="judgement-note hidden">화면 교정 · 입력한 목표음 순서대로 진행합니다.</p>
+      </div>
+      <div id="judgementCorrectionRules" class="hidden">
+        <div class="judgement-fields">
+          <label>교정 기준(¢ 초과)<input id="judgementCorrectionThreshold" type="number" min="0" step="0.1" value="100" required /></label>
+          <label>최대 교정 횟수<input id="judgementCorrectionMaximum" type="number" min="0" step="1" value="3" required /></label>
+        </div>
+        <p id="judgementCorrectionCount" class="judgement-note">교정 0/3</p>
       </div>
       <div id="judgementLevelControls" class="hidden judgement-level-settings">
         <div class="judgement-fields">
@@ -61,7 +67,7 @@
           <label>연습 날짜<input id="judgementDate" type="date" required /></label>
           <label id="judgementFeedbackField">피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
         </div>
-        <label class="judgement-wide-field">오늘 목표음 24개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="F3 B2 A2 A2 E3 B2 D#3 C#3 A#2 C3 A2 D3 / C3 D3 C3 G3 C#3 D3 E3 E3 A#2 D#3 B2 D#3"></textarea></label>
+        <label class="judgement-wide-field">오늘 목표음 12개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="E3 D#3 F3 D#3 G3 D3 B2 C3 C#3 C3 A2 A#2"></textarea></label>
         <p class="judgement-note">아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.</p>
       </form>
       <div id="judgementActive" class="hidden">
@@ -83,7 +89,6 @@
           </div>
         </form>
         <div id="judgementResult" class="judgement-result hidden" aria-live="polite"></div>
-        <label id="judgementBeatField" class="judgement-wide-field hidden">겹치기 시작할 때 울렁임이 들렸나?<select id="judgementBeatDetected"><option value="">Y / N 선택</option><option value="Y">Y · 들림</option><option value="N">N · 안 들림</option></select></label>
       </div>
       <p id="judgementActionError" class="judgement-error hidden" role="alert"></p>
       <div id="recordingSaveControl" class="recording-option-row">
@@ -397,7 +402,7 @@
         <li>과거 기록을 열고 ‘이 목표음으로 다시 연습’을 누르면 같은 음을 바로 반복할 수 있습니다.</li>
         <li>‘가사 구절 연습’에서는 짧은 가사를 저장해 화면에 띄운 채 여러 테이크를 부를 수 있습니다. 정답 멜로디를 판정하는 모드는 아니며, 각 테이크의 실제 음정 흐름과 음역을 비교하는 용도입니다.</li>
         <li>‘연습 기록’의 공유 버튼에서는 ChatGPT가 읽기 좋은 요약을 공유·복사하거나, 모든 음정 좌표가 든 JSON 파일을 내보낼 수 있습니다.</li>
-        <li>‘연습 녹음’에 날짜와 목표음 24개를 붙여 넣고 기존 녹음 버튼으로 진행합니다. ②에만 판단을 입력하며, 교정·재시도에는 입력하지 않습니다. 하루 JSON에는 실패한 시도를 포함한 모든 단계를 저장합니다.</li>
+        <li>‘연습 녹음’에 날짜와 목표음 12개를 붙여 넣고 기존 녹음 버튼으로 진행합니다. 화면 1블록이며 기본 교정은 100¢ 초과인 앞 3회입니다. ②에만 판단을 입력하며, 하루 JSON에는 모든 단계를 저장합니다.</li>
       </ol>
       <div class="help-callout">착지가 정확한데 유지 구간이 낮아지고 드리프트가 음수라면 ‘처음 음을 못 찾는 문제’가 아니라 ‘맞춘 뒤 내려가는 문제’로 볼 수 있습니다. 소리는 충분한데 음정이 잡히지 않으면 화면 아래 ‘입력 상태’를 확인하세요.</div>
     </form>
@@ -413,16 +418,16 @@
     </form>
   </dialog>
 
-  <script src="./pitch-core.js?v=3.7.0"></script>
-  <script src="./judgement-core.js?v=3.7.0"></script>
-  <script src="./level-core.js?v=3.7.0"></script>
-  <script src="./app.js?v=3.7.0" defer></script>
-  <script src="./history.js?v=3.7.0" defer></script>
-  <script src="./history-share.js?v=3.7.0" defer></script>
-  <script src="./vocal-scope-patch.js?v=3.7.0" defer></script>
-  <script src="./reference-tone.js?v=3.7.0" defer></script>
-  <script src="./phrase-practice.js?v=3.7.0" defer></script>
-  <script src="./recording.js?v=3.7.0" defer></script>
-  <script src="./judgement-practice.js?v=3.7.0" defer></script>
+  <script src="./pitch-core.js?v=3.8.0"></script>
+  <script src="./judgement-core.js?v=3.8.0"></script>
+  <script src="./level-core.js?v=3.8.0"></script>
+  <script src="./app.js?v=3.8.0" defer></script>
+  <script src="./history.js?v=3.8.0" defer></script>
+  <script src="./history-share.js?v=3.8.0" defer></script>
+  <script src="./vocal-scope-patch.js?v=3.8.0" defer></script>
+  <script src="./reference-tone.js?v=3.8.0" defer></script>
+  <script src="./phrase-practice.js?v=3.8.0" defer></script>
+  <script src="./recording.js?v=3.8.0" defer></script>
+  <script src="./judgement-practice.js?v=3.8.0" defer></script>
 </body>
 </html>
