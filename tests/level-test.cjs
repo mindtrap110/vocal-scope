@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict');
 const L=require('../level-core.js'),C=require('../judgement-core.js');
 const {fixture}=require('./training-fixture.cjs');
-const targets=Array(24).fill('A2').join(' '),date='2026-10-20';
+const targets=Array(12).fill('A2').join(' '),date='2026-10-20';
 
 // Known PCM power, overlapping buffers, and loud input outside the assessment
 // window provide an independent numeric oracle, rather than averaging dB.
@@ -89,7 +89,7 @@ async function exported(f,dayId=date){
 
   // Screen correction is measured, marked as mixed, and excluded from the
   // daily initial median. Its deliberately shorter recording still has level.
-  const screen=await fixture();setup(screen);screen.w.qaDb=-25;
+  const screen=await fixture();setup(screen);screen.w.qaDb=-25;screen.w.qaOffset=180;
   await startInitial(screen);await screen.advance(3400);judge(screen,'high');
   screen.w.qaDb=-20;screen.$('measureBtn').click();await screen.advance(2000);
   assert.equal(screen.$('judgementLevelMeter').classList.contains('hidden'),true);
@@ -105,13 +105,6 @@ async function exported(f,dayId=date){
   screen.training(false);screen.w.VocalHistory.openSession(screen.records()[1].id);
   assert.ok(screen.$('sessionLevel').textContent.includes('기준음 포함'));
   assert.deepEqual(screen.errors,[]);await screen.close();
-
-  const beat=await fixture();setup(beat,'2026-10-21');beat.change('judgementCorrectionMode','compare');
-  await startInitial(beat);await beat.advance(3400);judge(beat,'high');beat.$('measureBtn').click();await beat.advance(1000);
-  assert.equal(beat.w.VocalScope.state.measuring,false);assert.equal(beat.$('judgementLevelMeter').classList.contains('hidden'),true);
-  beat.$('measureBtn').click();beat.change('judgementBeatDetected','Y');beat.$('measureBtn').click();
-  assert.equal(beat.records()[0].levelDb,null);assert.equal(beat.records()[0].training.beatHeard,true);
-  assert.deepEqual(beat.errors,[]);await beat.close();
 
   // Once onset is known, subsequent pitch gaps do not delete quiet/noisy input
   // from the RMS window; a no-onset discarded recording has no invented value.

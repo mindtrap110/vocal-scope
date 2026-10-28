@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.resolve(__dirname,'..');
-const DAY_KEY='vocalScopeIntegratedRecordingV1',HISTORY_KEY='vocalScopePracticeHistoryV1';
+const DAY_KEY='vocalScopeIntegratedRecordingV3a',HISTORY_KEY='vocalScopePracticeHistoryV1';
 
 async function fixture(seed={},options={}){
   const errors=[],virtualConsole=new VirtualConsole();

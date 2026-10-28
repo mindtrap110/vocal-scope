@@ -38,7 +38,7 @@ async function request(url,mode='same-origin'){
 }
 (async()=>{
   await lifecycle('install');assert.equal(waiting,true);
-  cacheName=(await caches.keys())[0];assert.ok(cacheName.includes('input-level'));
+  cacheName=(await caches.keys())[0];assert.ok(cacheName.includes('v3a'));
   stores.set('vocal-scope-old',new Map());await lifecycle('activate');
   assert.equal(claimed,true);assert.deepEqual(await caches.keys(),[cacheName]);
   const urls=[...html.matchAll(/(?:src|href)="(\.\/[^"?]+\.(?:js|css)\?v=[^"]+)"/g)].map(match=>match[1]);
@@ -51,7 +51,7 @@ async function request(url,mode='same-origin'){
   assert.ok(await caches.match(`./pitch-worker.js?v=${version}`));
   const worker=fs.readFileSync(path.join(root,'pitch-worker.js'),'utf8');
   assert.ok(worker.includes(`./pitch-core.js?v=${version}`));
-  assert.ok((await (await request('./','navigate')).text()).includes('judgementCorrectionMode'));
+  assert.ok((await (await request('./','navigate')).text()).includes('judgementCorrectionThreshold'));
   online=true;
   assert.equal(await (await request(`./judgement-practice.js?v=${version}`)).text(),'fresh response');
   assert.equal(await (await request('./','navigate')).text(),'fresh response');
