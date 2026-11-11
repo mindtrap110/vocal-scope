@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const api = factory(root);
+  const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VocalAPrime = api;
-})(typeof self !== 'undefined' ? self : globalThis, function (root) {
+})(typeof self !== 'undefined' ? self : globalThis, function () {
   'use strict';
 
   const PROTOCOL = 'a-prime';
@@ -42,47 +42,60 @@
     return info;
   }
 
-  async function connectCapture({ audioContext, source, stream, fallbackConstraints, version }) {
-    if (!audioContext.audioWorklet || typeof root.AudioWorkletNode !== 'function') {
-      throw new Error('이 브라우저는 A′ 녹음에 필요한 오디오 기능을 지원하지 않습니다. Safari에서 다시 열어 주세요.');
-    }
-    const url = new URL(`./a-prime-pcm.js?v=${version}`, root.document.baseURI);
-    await audioContext.audioWorklet.addModule(url.href);
-    if (audioContext.state === 'closed') throw new Error('마이크 연결이 중단되었습니다.');
-    const node = new root.AudioWorkletNode(audioContext, 'vocal-a-prime-capture', {
-      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
-      channelCount: 1, channelCountMode: 'explicit',
-    });
-    let disposed = false, marked = false;
+  function createCapture() {
+    let pcm = null, rate = 0, onsetFrame = null, written = 0, disposed = false;
+    // The input frames already feed pitch and RMS. Only copy their new PCM;
+    // do not open another microphone or connect anything to the audio output.
     const take = {
       clip: null,
-      failed: false,
-      micSettings: micSettings(stream, fallbackConstraints),
-      markOnset() {
-        if (disposed || marked) return;
-        marked = true;
-        try { node.port.postMessage({ onsetFrame: Math.round(audioContext.currentTime * audioContext.sampleRate) }); }
-        catch (_) { take.failed = true; }
+      failure: null,
+      sawFrames: false,
+      sawSignal: false,
+      markOnset(audioContext) {
+        if (disposed || onsetFrame !== null || take.failure) return;
+        rate = audioContext?.sampleRate;
+        const frame = Math.round(audioContext?.currentTime * rate);
+        if (!Number.isInteger(rate) || rate <= 0 || !Number.isSafeInteger(frame) || frame < 0) {
+          take.failure = 'clock'; return;
+        }
+        onsetFrame = frame;
+        pcm = new Float32Array(rate * 3);
+      },
+      append({ samples, sampleRate, frameEnd, db }) {
+        if (disposed || take.clip || take.failure || !samples?.length || !Number.isSafeInteger(frameEnd)) return;
+        take.sawFrames = true;
+        take.sawSignal ||= Number.isFinite(db);
+        if (onsetFrame === null) return;
+        if (sampleRate !== rate) { take.failure = 'clock'; return; }
+        const nextFrame = onsetFrame + written;
+        if (frameEnd <= nextFrame) return;
+        let offset = nextFrame - (frameEnd - samples.length);
+        if (written) {
+          const overlap = Math.min(written, 32);
+          const matches = at => {
+            if (at < overlap || at >= samples.length) return false;
+            for (let i = 0; i < overlap; i++) if (pcm[written - overlap + i] !== samples[at - overlap + i]) return false;
+            return true;
+          };
+          // currentTime can advance between reading the analyser and its clock.
+          // Correct only when the overlapping PCM confirms the alignment.
+          if ((offset < 0 || offset >= overlap) && !matches(offset)) {
+            const aligned = [128, -128, 256, -256].map(shift => offset + shift).find(matches);
+            if (aligned === undefined) { take.failure = 'gap'; return; }
+            offset = aligned;
+          }
+        }
+        if (offset < 0) { take.failure = 'gap'; return; }
+        const count = Math.min(pcm.length - written, samples.length - offset);
+        pcm.set(samples.subarray(offset, offset + count), written);
+        written += count;
+        if (written === pcm.length) take.clip = { samples: pcm, sampleRate: rate };
       },
       dispose() {
-        if (disposed) return;
         disposed = true;
-        node.port.onmessage = null;
-        node.onprocessorerror = null;
-        try { node.port.close(); } catch (_) {}
-        try { source.disconnect(node); } catch (_) {}
-        try { node.disconnect(); } catch (_) {}
+        pcm = null;
       },
     };
-    node.port.onmessage = ({ data }) => {
-      if (disposed) return;
-      if (data?.type === 'clip' && data.samples?.length === Math.round(audioContext.sampleRate * 3)) {
-        take.clip = { samples: data.samples, sampleRate: audioContext.sampleRate };
-      } else take.failed = true;
-    };
-    node.onprocessorerror = () => { take.failed = true; };
-    try { source.connect(node); node.connect(audioContext.destination); }
-    catch (error) { take.dispose(); throw error; }
     return take;
   }
 
@@ -167,5 +180,5 @@
   }
 
   return { PROTOCOL, MIC_FIELDS, validJudgement, judgementText, isInitial, isPending, isBlind, sessionRows,
-    micSettings, connectCapture, buildCSV, encodeWav, wavName, makeZip };
+    micSettings, createCapture, buildCSV, encodeWav, wavName, makeZip };
 });

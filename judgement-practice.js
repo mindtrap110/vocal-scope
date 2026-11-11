@@ -134,7 +134,7 @@
     clearTimer(); T().stop(); error(); clearAnswer();
     disposeTake();
     const recordVoice=aPrime()&&stage==='initial';
-    if(recordVoice)setAPrimeAnswers();
+    if(recordVoice){setAPrimeAnswers();runtime.take=A.createCapture();$('judgementCountdown').textContent='마이크 연결 중…';}
     liveLevelDb=null;
     runtime.stage=stage; runtime.onset=null; runtime.startedAt=null; runtime.context=context(stage); runtime.preparing=true; day.pendingId=null;
     day.step=stage==='correction'?'screenCorrection':'capturing';
@@ -143,14 +143,7 @@
     try {
       if(stage==='correction') await T().startTrainingContinuous(round().targetMidi,{allowPitch:true});
       if(token!==runtime.token){T().stop();return;}
-      if(recordVoice){
-        await V().startMeasurement({prepareInput:async input=>{
-          const take=await A.connectCapture({...input,version:V().APP_VERSION});
-          if(token!==runtime.token){take.dispose();throw new Error('A′ 녹음 준비가 중단되었습니다.');}
-          runtime.take=take;
-          runtime.context.micSettings=take.micSettings;
-        }});
-      }else await V().startMeasurement();
+      await V().startMeasurement();
       if(token!==runtime.token){if(V().state.measuring)V().stopMeasurement('training-interrupted');return;}
       if(!V().state.measuring)throw new Error('마이크를 시작하지 못했습니다.');
       runtime.startedAt=performance.now();
@@ -158,9 +151,9 @@
         const now=performance.now();
         $('judgementCountdown').textContent=runtime.onset==null?'발성을 기다립니다':`${(Math.max(0,3000-(now-runtime.onset))/1000).toFixed(1)}초`;
         if(runtime.onset!=null&&now-runtime.onset>=3000){
-          // The worklet returns exactly 3 s of PCM. Give its message a short
-          // window to arrive before closing the input context.
-          if(!recordVoice||runtime.take?.clip||runtime.take?.failed||now-runtime.onset>=3450)V().stopMeasurement('training-complete');
+          // The next analyser snapshot may contain the last samples of the
+          // 3 s take. The assessment window and detector are unchanged.
+          if(!recordVoice||runtime.take?.clip||runtime.take?.failure||now-runtime.onset>=3450)V().stopMeasurement('training-complete');
         }
         else if(now-runtime.startedAt>=8000)V().stopMeasurement('training-no-voice');
       },60);
@@ -175,7 +168,7 @@
   function onStop(e) {
     if(!runtime.context){queueMicrotask(render);return;}
     clearTimer();T().stop();
-    const rec=current(), stage=runtime.stage, clip=runtime.take?.clip; runtime.context=null;disposeTake();
+    const rec=current(), stage=runtime.stage, take=runtime.take, clip=take?.clip; runtime.context=null;disposeTake();
     if(!rec){day.step=stage==='retry'?'retryReady':stage==='correction'?initialResultStep():'initialReady';persist();render();return error('기록을 저장하지 못했습니다. 다시 녹음해 주세요.');}
     if(stage==='correction') {
       if(aPrime()&&!H().updateTraining(day.initialSessionId,{screenCorrectionUsed:true}))error('화면 교정 여부를 저장하지 못했습니다.');
@@ -184,14 +177,23 @@
     else if(rec.assessment?.status!=='ok'||e.detail.reason!=='training-complete'){
       if(!H().updateTraining(rec.id,{stage:'discarded',judgement:null,autoScore:null,correctionIndex:null}))return error('실패한 시도를 저장하지 못했습니다.');
       day.step=stage==='retry'?'retryInvalid':'initialInvalid';
+      if(take&&e.detail.reason==='training-no-voice'){
+        error(take.sawSignal?'마이크 신호는 들어왔지만 3초 발성을 인식하지 못했습니다. 소리 크기 막대를 확인하고 다시 불러 주세요.':take.sawFrames?'마이크는 열렸지만 소리 신호가 잡히지 않았습니다. 입력 장치를 확인해 주세요.':'마이크 입력 데이터를 받지 못했습니다. Safari에서 다시 열고 마이크 권한을 확인해 주세요.');
+      }
     } else if(aPrime()&&stage==='initial'){
-      if(!clip)discardAPrimeTake(rec,'3초 녹음이 완성되지 않았습니다. 같은 시행을 다시 불러 주세요.');
+      if(!clip)discardAPrimeTake(rec,take?.failure==='gap'?'음정은 측정됐지만 재생용 녹음이 중간에 끊겼습니다. 같은 시행을 다시 불러 주세요.':'음정은 측정됐지만 3초 녹음이 완성되지 않았습니다. 같은 시행을 다시 불러 주세요.');
       else {clips.set(rec.id,clip);day.step='aPrimeListenReady';}
     } else day.step=stage==='initial'?'judgement':'retryResult';
     persist();render();
     queueMicrotask(render);
   }
   function disposeTake() { runtime.take?.dispose();runtime.take=null; }
+  function getSessionContext() {
+    if(!enabled||!runtime.context)return null;
+    const stream=runtime.take&&V().getCurrentStream();
+    if(stream&&!runtime.context.micSettings)runtime.context.micSettings=A.micSettings(stream,V().state.usedFallbackConstraints);
+    return {...runtime.context};
+  }
   function initialResultStep() { return aPrime()?'aPrimeResult':'initialResult'; }
   function aPrimeInitial() { return H().readSessions().find(s=>s.id===day?.initialSessionId&&A.isInitial(s)); }
   function aPrimeAnswer(prefix) { return {direction:$(`${prefix}Direction`).value,confidence:Number($(`${prefix}Confidence`).value)}; }
@@ -477,13 +479,13 @@
     ['judgementDirection','judgementSize','judgementConfidence'].forEach(id=>$(id).addEventListener('change',updateAnswer));
     $('judgementFeedback').addEventListener('change',()=>{if(day&&!aPrime()){day.feedbackLevel=Number($('judgementFeedback').value);persist();}});
     $('trainingExportBtn').addEventListener('click',()=>window.VocalHistoryShare.exportTrainingDay($('trainingExportDate').value));
-    window.addEventListener('vs:pitch',e=>{if(!runtime.context)return;if(runtime.onset==null){runtime.onset=e.detail.now;runtime.take?.markOnset();}if(day.step==='screenCorrection')$('judgementCorrectionLive').textContent=`교정 실시간: ${cents((e.detail.midi-round().targetMidi)*100)} · 평가 제외`;});
-    window.addEventListener('vs:input-level',e=>{liveLevelDb=e.detail.db;updateLevelMeter();});
+    window.addEventListener('vs:pitch',e=>{if(!runtime.context)return;if(runtime.onset==null){runtime.onset=e.detail.now;runtime.take?.markOnset(V().state.audioContext);}if(day.step==='screenCorrection')$('judgementCorrectionLive').textContent=`교정 실시간: ${cents((e.detail.midi-round().targetMidi)*100)} · 평가 제외`;});
+    window.addEventListener('vs:input-level',e=>{runtime.take?.append(e.detail);liveLevelDb=e.detail.db;updateLevelMeter();});
     window.addEventListener('vs:history-saved',onSaved);window.addEventListener('vs:measurement-stop',onStop);
     window.addEventListener('vs:visibility',e=>{if(e.detail.hidden)interrupt();});window.addEventListener('pagehide',interrupt);
     window.addEventListener('vs:history-session-deleted',e=>{clips.delete(e.detail?.id);render();});
     window.addEventListener('vs:history-cleared',()=>{interrupt();clips.clear();day=null;localStorage.removeItem(KEY);localStorage.removeItem(APRIME_KEY);render();});
   }
-  window.VocalJudgementPractice={handleButton,isEnabled:()=>enabled,isActive:active,isPitchHidden:pitchHidden,getSessionContext:()=>enabled&&runtime.context?{...runtime.context}:null};
+  window.VocalJudgementPractice={handleButton,isEnabled:()=>enabled,isActive:active,isPitchHidden:pitchHidden,getSessionContext};
   document.addEventListener('DOMContentLoaded',init);
 })();

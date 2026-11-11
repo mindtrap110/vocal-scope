@@ -6,8 +6,8 @@ const KOREAN = ['도','도♯','레','레♯','미','파','파♯','솔','솔♯
 const ANALYZE_INTERVAL = 42;
 const HISTORY_MS = 12000;
 const TARGET_TOLERANCE_CENTS = 15;
-const APP_VERSION = '3.9.0';
-const BUILD_ID = '2026-11-10-aprime';
+const APP_VERSION = '3.9.1';
+const BUILD_ID = '2026-11-11-aprime-mic';
 const WORKER_TIMEOUT_MS = 1500;
 
 const state = {
@@ -426,7 +426,7 @@ async function releaseWakeLock() {
   state.wakeLock = null;
 }
 
-async function startMeasurement({ prepareInput } = {}) {
+async function startMeasurement() {
   if (state.measuring) { stopMeasurement('user'); return; }
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     showError('이 기능은 HTTPS로 열린 Safari 또는 홈 화면 웹 앱에서만 마이크를 사용할 수 있습니다.');
@@ -445,10 +445,6 @@ async function startMeasurement({ prepareInput } = {}) {
     state.analyser.fftSize = 4096;
     state.analyser.smoothingTimeConstant = 0;
     state.source.connect(state.analyser);
-    if (prepareInput) await withTimeout(prepareInput({
-      audioContext:state.audioContext, source:state.source, stream:state.stream,
-      fallbackConstraints:state.usedFallbackConstraints,
-    }),5000,'A′ 녹음 준비');
     state.workerFailureStreak=0;createPitchWorker();
     const track = state.stream.getAudioTracks?.()[0];
     if (track) track.onended = () => {
