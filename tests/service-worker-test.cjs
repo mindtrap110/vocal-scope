@@ -38,17 +38,18 @@ async function request(url,mode='same-origin'){
 }
 (async()=>{
   await lifecycle('install');assert.equal(waiting,true);
-  cacheName=(await caches.keys())[0];assert.ok(cacheName.includes('v3a'));
+  cacheName=(await caches.keys())[0];assert.ok(cacheName.includes('aprime'));
   stores.set('vocal-scope-old',new Map());await lifecycle('activate');
   assert.equal(claimed,true);assert.deepEqual(await caches.keys(),[cacheName]);
   const urls=[...html.matchAll(/(?:src|href)="(\.\/[^"?]+\.(?:js|css)\?v=[^"]+)"/g)].map(match=>match[1]);
-  assert.equal(urls.length,13);
+  assert.equal(urls.length,14);
   for(const url of urls){
     assert.equal(new URL(url,base).search,`?v=${version}`);
     assert.ok(await caches.match(url),`Missing versioned offline asset ${url}`);
     assert.ok((await request(url)).ok);
   }
   assert.ok(await caches.match(`./pitch-worker.js?v=${version}`));
+  assert.ok((await request(`./a-prime-pcm.js?v=${version}`)).ok);
   const worker=fs.readFileSync(path.join(root,'pitch-worker.js'),'utf8');
   assert.ok(worker.includes(`./pitch-core.js?v=${version}`));
   assert.ok((await (await request('./','navigate')).text()).includes('judgementCorrectionThreshold'));

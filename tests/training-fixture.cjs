@@ -11,6 +11,7 @@ async function fixture(seed={},options={}){
     url:'https://vocal-scope.test/',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole,
   });
   const w=dom.window,$=id=>w.document.getElementById(id);
+  w.TextEncoder=TextEncoder;
   for(const [key,value] of Object.entries(seed))w.localStorage.setItem(key,value);
   const canvas=new Proxy({},{get:(_,key)=>key==='measureText'?text=>({width:text.length*6}):()=>{}});
   w.HTMLCanvasElement.prototype.getContext=()=>canvas;
@@ -40,11 +41,15 @@ async function fixture(seed={},options={}){
   }
   class Param{constructor(){this.value=0;}setValueAtTime(v){this.value=v;}exponentialRampToValueAtTime(){}linearRampToValueAtTime(){}cancelScheduledValues(){}}
   class Node{constructor(){this.gain=this.frequency=new Param();}connect(){}disconnect(){}start(){}stop(){}}
-  class AudioContext{
-    constructor(){this.state='running';this.destination={};this.sampleRate=options.sampleRate||48000;this.started=now;}
+  const audioEvents=[];
+  class AudioContext extends w.EventTarget{
+    constructor(){super();this.state='running';this.destination={};this.sampleRate=options.sampleRate||48000;this.started=now;
+      this.audioWorklet={addModule:async url=>audioEvents.push({type:'worklet',url})};}
     get currentTime(){return (now-this.started)/1000;}
-    resume(){this.state='running';return Promise.resolve();}close(){this.state='closed';return Promise.resolve();}
-    createGain(){return new Node();}createOscillator(){return new Node();}createMediaStreamSource(){return new Node();}
+    resume(){audioEvents.push({type:'resume'});this.state='running';return Promise.resolve();}close(){this.state='closed';return Promise.resolve();}
+    createGain(){return new Node();}
+    createOscillator(){const osc=new Node();osc.start=when=>audioEvents.push({type:'toneStart',when,hz:osc.frequency.value,context:this});osc.stop=when=>audioEvents.push({type:'toneStop',when,context:this});return osc;}
+    createMediaStreamSource(){return new Node();}
     createAnalyser(){const context=this;return{fftSize:4096,getFloatTimeDomainData(samples){
       const end=Math.round(context.currentTime*context.sampleRate);
       const hz=440*2**(((w.VocalScope?.state.targetMidi??45)+(w.qaOffset||0)/100-69)/12);
@@ -53,10 +58,34 @@ async function fixture(seed={},options={}){
         const time=(end-samples.length+i)/context.sampleRate;
         samples[i]=typeof w.qaSample==='function'?w.qaSample(time):amplitude*Math.sin(2*Math.PI*hz*time);
       }
-    }};}createBuffer(){return{};}createBufferSource(){return new Node();}
+    }};}
+    createBuffer(channels,length,sampleRate){const pcm=new w.Float32Array(length);return{duration:length/sampleRate,getChannelData:()=>pcm};}
+    createBufferSource(){
+      const node=new Node();let timer;
+      node.connect=destination=>{node.destination=destination;};
+      node.start=(when=this.currentTime)=>{
+        audioEvents.push({type:'voice',when,buffer:node.buffer,context:this,direct:node.destination===this.destination});
+        timer=w.setTimeout(()=>node.onended?.(),1000*(when-this.currentTime+node.buffer.duration));
+      };
+      node.stop=()=>{w.clearTimeout(timer);};return node;
+    }
   }
   w.AudioContext=AudioContext;
-  w.navigator.mediaDevices={getUserMedia:async()=>({getAudioTracks:()=>[{readyState:'live'}],getTracks:()=>[{stop(){}}]})};
+  w.AudioWorkletNode=class extends Node{
+    constructor(context){super();let timer;
+      this.port={onmessage:null,postMessage:()=>{
+        timer=w.setTimeout(()=>{
+          const samples=new w.Float32Array(context.sampleRate*3);samples[0]=0.125;samples[1]=-0.25;
+          this.port.onmessage?.({data:{type:'clip',samples}});
+        },3020);
+      },close:()=>w.clearTimeout(timer)};
+    }
+  };
+  w.navigator.mediaDevices={getUserMedia:async constraints=>{
+    audioEvents.push({type:'mic',constraints});
+    const track={readyState:'live',getSettings:()=>options.micSettings||{echoCancellation:false,noiseSuppression:false,autoGainControl:false},stop(){}};
+    return {getAudioTracks:()=>[track],getTracks:()=>[track]};
+  }};
   w.qaOffset=80;w.qaDb=-30;
   w.Worker=class{
     postMessage(message){
@@ -66,13 +95,13 @@ async function fixture(seed={},options={}){
     }
     terminate(){this.onmessage=null;}
   };
-  for(const file of ['pitch-core.js','judgement-core.js','level-core.js','app.js','history.js','history-share.js','vocal-scope-patch.js','reference-tone.js','phrase-practice.js','recording.js','judgement-practice.js']){
+  for(const file of ['pitch-core.js','judgement-core.js','level-core.js','a-prime.js','app.js','history.js','history-share.js','vocal-scope-patch.js','reference-tone.js','phrase-practice.js','recording.js','judgement-practice.js']){
     vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),dom.getInternalVMContext(),{filename:file});
   }
   await new Promise(resolve=>w.document.addEventListener('DOMContentLoaded',resolve,{once:true}));await flush();
   const change=(id,value)=>{$(id).value=value;$(id).dispatchEvent(new w.Event('change'));};
   const training=on=>{$('trainingEnabledToggle').checked=on;$('trainingEnabledToggle').dispatchEvent(new w.Event('change'));};
-  return{w,dom,$,change,training,advance,flush,errors,
+  return{w,dom,$,change,training,advance,flush,errors,audioEvents,
     day:()=>JSON.parse(w.localStorage.getItem(DAY_KEY)),
     records:()=>w.VocalHistory.readSessions(),
     seed:()=>Object.fromEntries(Array.from({length:w.localStorage.length},(_,i)=>{const key=w.localStorage.key(i);return[key,w.localStorage.getItem(key)];})),
