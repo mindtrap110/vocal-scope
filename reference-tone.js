@@ -102,25 +102,16 @@
     if (!replay) return;
     activeReplay = null;
     clearTimeout(replay.timer);
-    replay.context.removeEventListener('statechange', replay.onStateChange);
-    replay.voice.onended = null;
+    const { audio, url } = replay;
+    audio.onended = audio.onerror = audio.onpause = null;
+    audio.pause();
+    audio.removeAttribute('src');
+    URL.revokeObjectURL(url);
+    playingUntil = 0;
     replay.resolve(completed);
   }
 
-  async function trainingTone(midi, durationMs, { allowPitch = false, clip = null } = {}) {
-    if (!Number.isFinite(midi)) throw new Error('목표음을 확인해 주세요.');
-    stopActiveTone();
-    const token = toneToken;
-    const ctx = await ensureAudioContext();
-    if (token !== toneToken) return;
-    let voice;
-    if (clip) {
-      const buffer = ctx.createBuffer(1, clip.samples.length, clip.sampleRate);
-      buffer.getChannelData(0).set(clip.samples);
-      voice = ctx.createBufferSource();
-      voice.buffer = buffer;
-    }
-    const now = ctx.currentTime;
+  function scheduleTrainingTone(ctx, midi, durationMs, now) {
     const master = ctx.createGain();
     master.gain.setValueAtTime(0, now);
     master.gain.linearRampToValueAtTime(0.2, now + 0.02);
@@ -141,48 +132,72 @@
       if (Number.isFinite(durationMs)) osc.stop(now + durationMs / 1000);
       nodes.push(osc, gain);
     }
+    return { nodes, master };
+  }
+
+  async function trainingTone(midi, durationMs, { allowPitch = false } = {}) {
+    if (!Number.isFinite(midi)) throw new Error('목표음을 확인해 주세요.');
+    stopActiveTone();
+    const token = toneToken;
+    const ctx = await ensureAudioContext();
+    if (token !== toneToken) return;
+    const { nodes, master } = scheduleTrainingTone(ctx, midi, durationMs, ctx.currentTime);
     activeNodes = nodes; trainingMaster = master;
     continuous = !Number.isFinite(durationMs); allowPitchDuringTone = allowPitch;
     playingUntil = continuous ? Infinity : performance.now() + durationMs;
-    if (voice) {
-      const totalMs = durationMs + 500 + 1000 * voice.buffer.duration;
-      let resolve;
-      const ended = new Promise(done => { resolve = done; });
-      const replay = { context: ctx, voice, resolve, timer: null, onStateChange: () => {
-        if (activeReplay === replay && ctx.state !== 'running') stopActiveTone();
-      } };
-      activeReplay = replay;
-      activeNodes.push(voice);
-      playingUntil = performance.now() + totalMs;
-      ctx.addEventListener('statechange', replay.onStateChange);
-      voice.onended = () => {
-        if (activeReplay !== replay) return;
-        finishReplay(true);
-        stopActiveTone();
-      };
-      replay.timer = setTimeout(() => { if (activeReplay === replay) stopActiveTone(); }, totalMs + 3000);
-      try {
-        // One audio clock; no delayed media.play() and no gain change.
-        voice.connect(ctx.destination);
-        voice.start(now + durationMs / 1000 + 0.5);
-      } catch (error) { stopActiveTone(); throw error; }
-      return { ended };
-    }
   }
 
-  async function playTrainingWithRecording(midi, clip) {
+  async function prepareTrainingRecording(midi, { samples, sampleRate }) {
+    if (!samples.some(sample => Number.isFinite(sample) && Math.round(sample * (sample < 0 ? 32768 : 32767)) !== 0)) {
+      throw new Error('재생할 녹음에 소리가 들어 있지 않습니다.');
+    }
+    const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!OfflineCtx) throw new Error('이 브라우저는 A′ 녹음 재생 준비를 지원하지 않습니다.');
+    const ctx = new OfflineCtx(1, sampleRate, sampleRate);
+    scheduleTrainingTone(ctx, midi, 1000, 0);
     let timeout;
     try {
-      const starting = trainingTone(midi, 1000, { clip });
-      const requestedToken = toneToken;
       const limit = new Promise((_, reject) => {
-        timeout = setTimeout(() => {
-          if (requestedToken === toneToken) stopActiveTone();
-          reject(new Error('오디오 재생을 시작하지 못했습니다. 재생 버튼을 다시 눌러 주세요.'));
-        }, 4000);
+        timeout = setTimeout(() => reject(new Error('재생 준비 시간이 초과되었습니다.')), 4000);
       });
-      return await Promise.race([starting, limit]);
+      const tone = await Promise.race([ctx.startRendering(), limit]);
+      const voiceStart = sampleRate + Math.round(sampleRate * 0.5);
+      const combined = new Float32Array(voiceStart + samples.length);
+      combined.set(tone.getChannelData(0));
+      combined.set(samples, voiceStart);
+      return {
+        blob: new Blob([window.VocalAPrime.encodeWav({ samples: combined, sampleRate })], { type: 'audio/wav' }),
+        durationMs: combined.length / sampleRate * 1000
+      };
     } finally { clearTimeout(timeout); }
+  }
+
+  async function playTrainingWithRecording({ blob, durationMs }) {
+    stopActiveTone();
+    const audio = new Audio();
+    const url = URL.createObjectURL(blob);
+    let resolve;
+    const ended = new Promise(done => { resolve = done; });
+    const replay = { audio, url, resolve, timer: null };
+    activeReplay = replay;
+    const finish = completed => { if (activeReplay === replay) finishReplay(completed); };
+    audio.onended = () => finish(true);
+    audio.onerror = () => finish(false);
+    audio.onpause = () => finish(audio.ended);
+    try {
+      audio.src = url;
+      replay.timer = setTimeout(() => finish(false), 5000);
+      // Prepare the WAV before the tap so play() runs during the user's gesture.
+      await Promise.race([audio.play(), ended.then(() => { throw new Error('재생 시작 중단'); })]);
+      if (activeReplay !== replay) throw new Error('재생 시작 중단');
+      clearTimeout(replay.timer);
+      replay.timer = setTimeout(() => finish(false), durationMs + 5000);
+      playingUntil = Infinity;
+      return { ended };
+    } catch (_) {
+      finish(false);
+      throw new Error('재생을 시작하지 못했습니다. 재생 버튼을 다시 눌러 주세요.');
+    }
   }
 
   async function playMidi(midi, durationMs=1100) {
@@ -364,6 +379,7 @@
     stop: stopActiveTone,
     startContinuous,
     playTraining: (midi, ms = 2000) => trainingTone(midi, ms),
+    prepareTrainingRecording,
     playTrainingWithRecording,
     startTrainingContinuous: (midi, options = {}) => trainingTone(midi, Infinity, options),
     get contextState() { return toneContext?.state || 'not-created'; },

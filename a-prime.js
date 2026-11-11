@@ -6,20 +6,32 @@
   'use strict';
 
   const PROTOCOL = 'a-prime';
+  const MAX_PRE_REVEAL_PLAYS = 2;
   const MIC_FIELDS = ['echoCancellation', 'noiseSuppression', 'autoGainControl'];
   const DIRECTIONS = { high: '높음', match: '맞음', low: '낮음' };
+  const SIZES = { lt_semitone: '반음 미만', semitone_to_tone: '반음~온음', more: '그 이상', octave: '옥타브' };
 
-  function validJudgement(judgement) {
+  function hasDirectionAndConfidence(judgement) {
     return Object.hasOwn(DIRECTIONS, judgement?.direction) && [1, 2, 3].includes(judgement.confidence);
   }
+  function validJudgement(judgement) {
+    return hasDirectionAndConfidence(judgement) &&
+      (judgement.direction === 'match' ? judgement.size === null : Object.hasOwn(SIZES, judgement.size));
+  }
+  function sizeOf(judgement) {
+    return judgement.direction !== 'match' && Object.hasOwn(SIZES, judgement.size) ? judgement.size : null;
+  }
   function judgementText(judgement) {
-    return validJudgement(judgement) ? `${DIRECTIONS[judgement.direction]} · 확신도 ${judgement.confidence}` : '미입력';
+    if (!hasDirectionAndConfidence(judgement)) return '미입력';
+    return [DIRECTIONS[judgement.direction], SIZES[sizeOf(judgement)], `확신도 ${judgement.confidence}`].filter(Boolean).join(' · ');
   }
   function isInitial(record) {
     return record?.training?.protocol === PROTOCOL && record.training.stage === 'initial';
   }
   function isPending(record) {
-    return isInitial(record) && !(validJudgement(record.training.realtimeJudgement) && validJudgement(record.training.playbackJudgement));
+    // Completed trials from before the size field still have valid saved results.
+    return isInitial(record) && !(hasDirectionAndConfidence(record.training.realtimeJudgement) &&
+      hasDirectionAndConfidence(record.training.playbackJudgement));
   }
   function isBlind(record) {
     const t = record?.training;
@@ -104,6 +116,7 @@
     'realtime_direction', 'realtime_confidence', 'playback_direction', 'playback_confidence',
     'pre_reveal_plays', 'post_reveal_plays', 'screen_correction_used',
     'echo_cancellation', 'noise_suppression', 'auto_gain_control', 'mic_fallback',
+    'realtime_size', 'playback_size',
   ];
   function csvCell(value) {
     const string = String(value ?? '');
@@ -116,7 +129,8 @@
       return [t.dayId, new Date(record.createdAt).toISOString(), t.trial, t.targetNote,
         record.assessment?.medianCents, record.levelDb, t.realtimeJudgement.direction, t.realtimeJudgement.confidence,
         t.playbackJudgement.direction, t.playbackJudgement.confidence, t.preRevealPlays, t.postRevealPlays,
-        !!t.screenCorrectionUsed, ...MIC_FIELDS.map(key => mic[key] ?? 'unknown'), mic.fallbackConstraints ?? 'unknown'];
+        !!t.screenCorrectionUsed, ...MIC_FIELDS.map(key => mic[key] ?? 'unknown'), mic.fallbackConstraints ?? 'unknown',
+        sizeOf(t.realtimeJudgement), sizeOf(t.playbackJudgement)];
     });
     return '\ufeff' + [CSV_HEADER, ...lines].map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
   }
@@ -179,6 +193,6 @@
     return zip;
   }
 
-  return { PROTOCOL, MIC_FIELDS, validJudgement, judgementText, isInitial, isPending, isBlind, sessionRows,
+  return { PROTOCOL, MAX_PRE_REVEAL_PLAYS, MIC_FIELDS, validJudgement, judgementText, isInitial, isPending, isBlind, sessionRows,
     micSettings, createCapture, buildCSV, encodeWav, wavName, makeZip };
 });

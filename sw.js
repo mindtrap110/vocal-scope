@@ -1,7 +1,7 @@
-const CACHE = 'vocal-scope-v3-20261111-aprime-mic';
+const CACHE = 'vocal-scope-v3-20261111-aprime-listen';
 const ASSETS = ['./','./index.html','./styles.css','./history.css','./app.js','./history.js','./history-share.js','./vocal-scope-patch.js','./reference-tone.js','./phrase-practice.js','./recording.js','./judgement-core.js','./judgement-practice.js','./level-core.js','./pitch-core.js','./pitch-worker.js','./manifest.webmanifest','./icon-180.png','./icon-512.png'];
 ASSETS.push('./a-prime.js');
-ASSETS.push(...ASSETS.filter(url => /\.(?:js|css)$/.test(url)).map(url => `${url}?v=3.9.1`));
+ASSETS.push(...ASSETS.filter(url => /\.(?:js|css)$/.test(url)).map(url => `${url}?v=3.9.2`));
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS.map(url => new Request(url, { cache:'reload' })))));

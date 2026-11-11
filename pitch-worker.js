@@ -1,4 +1,4 @@
-importScripts('./pitch-core.js?v=3.9.1');
+importScripts('./pitch-core.js?v=3.9.2');
 
 self.onmessage = (event) => {
   const { type, samples, sampleRate, options } = event.data || {};

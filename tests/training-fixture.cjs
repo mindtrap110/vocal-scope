@@ -44,12 +44,12 @@ async function fixture(seed={},options={}){
   const audioEvents=[];
   class AudioContext extends w.EventTarget{
     constructor(){super();this.state='running';this.destination={};this.sampleRate=options.sampleRate||48000;this.started=now;
-      this.audioWorklet={addModule:async url=>audioEvents.push({type:'worklet',url})};}
+      this.audioWorklet={addModule:async url=>{audioEvents.push({type:'worklet',url});throw new Error('AudioWorklet module unavailable');}};}
     get currentTime(){return (now-this.started)/1000;}
     resume(){audioEvents.push({type:'resume'});this.state='running';return Promise.resolve();}close(){this.state='closed';return Promise.resolve();}
     createGain(){return new Node();}
     createOscillator(){const osc=new Node();osc.start=when=>audioEvents.push({type:'toneStart',when,hz:osc.frequency.value,context:this});osc.stop=when=>audioEvents.push({type:'toneStop',when,context:this});return osc;}
-    createMediaStreamSource(){return new Node();}
+    createMediaStreamSource(){const input=new Node();input.connect=destination=>audioEvents.push({type:'inputConnect',analyser:typeof destination.getFloatTimeDomainData==='function'});return input;}
     createAnalyser(){const context=this;return{fftSize:4096,getFloatTimeDomainData(samples){
       const end=Math.round(context.currentTime*context.sampleRate);
       const hz=440*2**(((w.VocalScope?.state.targetMidi??45)+(w.qaOffset||0)/100-69)/12);
@@ -71,15 +71,25 @@ async function fixture(seed={},options={}){
     }
   }
   w.AudioContext=AudioContext;
-  w.AudioWorkletNode=class extends Node{
-    constructor(context){super();let timer;
-      this.port={onmessage:null,postMessage:()=>{
-        timer=w.setTimeout(()=>{
-          const samples=new w.Float32Array(context.sampleRate*3);samples[0]=0.125;samples[1]=-0.25;
-          this.port.onmessage?.({data:{type:'clip',samples}});
-        },3020);
-      },close:()=>w.clearTimeout(timer)};
+  w.OfflineAudioContext=class extends AudioContext{
+    constructor(channels,length,sampleRate){super();this.length=length;this.sampleRate=sampleRate;}
+    async startRendering(){
+      const frequency=audioEvents.find(event=>event.type==='toneStart'&&event.context===this)?.hz??0;
+      return {getChannelData:()=>w.Float32Array.from({length:this.length},(_,i)=>0.2*Math.sin(2*Math.PI*frequency*i/this.sampleRate))};
     }
+  };
+  const objectUrls=new Map();
+  w.URL.createObjectURL=blob=>{const url=`blob:https://vocal-scope.test/${nextId++}`;objectUrls.set(url,blob);return url;};
+  w.URL.revokeObjectURL=url=>objectUrls.delete(url);
+  w.Audio=class{
+    play(){
+      audioEvents.push({type:'mediaPlay',blob:objectUrls.get(this.src)});
+      if(w.qaRejectPlay)return Promise.reject(new Error('Playback blocked'));
+      this.timer=w.setTimeout(()=>{this.ended=true;this.onended?.();},4500);
+      return Promise.resolve();
+    }
+    pause(){w.clearTimeout(this.timer);}
+    removeAttribute(name){delete this[name];}
   };
   w.navigator.mediaDevices={getUserMedia:async constraints=>{
     audioEvents.push({type:'mic',constraints});

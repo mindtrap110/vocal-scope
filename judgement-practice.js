@@ -16,7 +16,7 @@
   let enabled = false, normalTarget = null;
   let correctionRules = { threshold: 100, maximum: 3 };
   let levelSettings = { targetDb: null, toleranceDb: 4 }, liveLevelDb = null;
-  const runtime = { context: null, stage: 'initial', onset: null, timer: null, startedAt: null, token: 0, preparing: false, take: null, replay: null };
+  const runtime = { context: null, stage: 'initial', onset: null, timer: null, startedAt: null, token: 0, preparing: false, take: null, replay: null, prepared: null };
   const clips = new Map();
   const aPrime = () => protocol === A.PROTOCOL;
   const dayKey = () => aPrime() ? APRIME_KEY : KEY;
@@ -134,7 +134,7 @@
     clearTimer(); T().stop(); error(); clearAnswer();
     disposeTake();
     const recordVoice=aPrime()&&stage==='initial';
-    if(recordVoice){setAPrimeAnswers();runtime.take=A.createCapture();$('judgementCountdown').textContent='마이크 연결 중…';}
+    if(recordVoice){runtime.prepared=null;setAPrimeAnswers();runtime.take=A.createCapture();$('judgementCountdown').textContent='마이크 연결 중…';}
     liveLevelDb=null;
     runtime.stage=stage; runtime.onset=null; runtime.startedAt=null; runtime.context=context(stage); runtime.preparing=true; day.pendingId=null;
     day.step=stage==='correction'?'screenCorrection':'capturing';
@@ -196,9 +196,13 @@
   }
   function initialResultStep() { return aPrime()?'aPrimeResult':'initialResult'; }
   function aPrimeInitial() { return H().readSessions().find(s=>s.id===day?.initialSessionId&&A.isInitial(s)); }
-  function aPrimeAnswer(prefix) { return {direction:$(`${prefix}Direction`).value,confidence:Number($(`${prefix}Confidence`).value)}; }
+  function aPrimeAnswer(prefix) {
+    const direction=$(`${prefix}Direction`).value;
+    return {direction,size:direction==='match'?null:$(`${prefix}Size`).value,confidence:Number($(`${prefix}Confidence`).value)};
+  }
   function setAPrimeAnswer(prefix,value) {
     $(`${prefix}Direction`).value=value?.direction??'';
+    $(`${prefix}Size`).value=value?.size??'';
     $(`${prefix}Confidence`).value=value?.confidence==null?'':String(value.confidence);
   }
   function setAPrimeAnswers(realtime, playback) {
@@ -209,39 +213,56 @@
       clips.delete(rec.id);
       H().updateTraining(rec.id,{stage:'discarded',correctionIndex:null});
     }
+    runtime.prepared=null;
     day.pendingId=null;day.initialSessionId=null;day.step='initialInvalid';
     setAPrimeAnswers();persist();render();error(message);
   }
+  function prepareAPrimeMedia(rec) {
+    const clip=clips.get(rec?.id);
+    if(!clip)return null;
+    if(runtime.prepared?.id===rec.id)return runtime.prepared;
+    const prepared={id:rec.id,media:null,error:null};
+    runtime.prepared=prepared;
+    T().prepareTrainingRecording(rec.training.targetMidi,clip).then(
+      media=>{prepared.media=media;},
+      e=>{prepared.error=e instanceof Error&&e.name!=='TypeError'?e.message:'재생용 녹음을 준비하지 못했습니다.';}
+    ).then(()=>{if(runtime.prepared===prepared)render();});
+    return prepared;
+  }
+  function interruptedAPrimeReplay(request) {
+    if(request.postReveal)return error('다시 듣기가 중단되었습니다.');
+    if(day.step==='aPrimePlaybackJudgement')return error('다시 듣기가 중단되었습니다. 재생 판단은 저장할 수 있습니다.');
+    if(request.count>=A.MAX_PRE_REVEAL_PLAYS)return discardAPrimeTake(request.record,'듣기가 중단되었습니다. 같은 시행을 다시 녹음해 주세요.');
+    error('듣기가 중단되었습니다. 재생 버튼을 다시 눌러 주세요.');
+  }
   async function listenAPrime(postReveal) {
     if(!enabled||!aPrime()||runtime.replay||runtime.preparing||V().state.measuring)return;
-    const rec=aPrimeInitial(),clip=clips.get(rec?.id);
-    if(!rec||!clip)return;
+    const rec=aPrimeInitial(),prepared=runtime.prepared;
+    if(!rec||prepared?.id!==rec.id||!prepared.media)return;
+    const count=postReveal?rec.training.postRevealPlays:rec.training.preRevealPlays;
     if(postReveal){
       if(A.isPending(rec)||!['aPrimeResult','retryResult'].includes(day.step))return;
     }else{
-      const realtimeJudgement=aPrimeAnswer('aPrimeLive');
-      if(day.step!=='aPrimeListenReady'||rec.training.preRevealPlays!==0||!A.validJudgement(realtimeJudgement))return;
-      if(!H().updateTraining(rec.id,{realtimeJudgement}))return error('실시간 판단을 저장하지 못했습니다.');
+      const realtimeJudgement=count?rec.training.realtimeJudgement:aPrimeAnswer('aPrimeLive');
+      if(!['aPrimeListenReady','aPrimePlaybackJudgement'].includes(day.step)||count>=A.MAX_PRE_REVEAL_PLAYS||!A.validJudgement(realtimeJudgement))return;
+      if(!count&&!H().updateTraining(rec.id,{realtimeJudgement}))return error('실시간 판단을 저장하지 못했습니다.');
     }
     error();
-    const request={record:rec,postReveal,started:false};
+    const request={record:rec,postReveal,started:false,count:(count||0)+1};
     runtime.replay=request;render();
     try {
-      const playback=await T().playTrainingWithRecording(rec.training.targetMidi,clip);
+      const playback=await T().playTrainingWithRecording(prepared.media);
       if(runtime.replay!==request)return;
-      if(!playback)throw new Error('재생을 시작하지 못했습니다. 다시 눌러 주세요.');
       request.started=true;
       const counter=postReveal?'postRevealPlays':'preRevealPlays';
-      if(!H().updateTraining(rec.id,{[counter]:(rec.training[counter]||0)+1})){
+      if(!H().updateTraining(rec.id,{[counter]:request.count})){
         T().stop();throw new Error('재생 횟수를 저장하지 못했습니다.');
       }
       render();
       const completed=await playback.ended;
       if(runtime.replay!==request)return;
-      if(!postReveal){
-        if(completed){day.step='aPrimePlaybackJudgement';persist();}
-        else discardAPrimeTake(rec,'듣기가 중단되었습니다. 같은 시행을 다시 녹음해 주세요.');
-      }else if(!completed)error('다시 듣기가 중단되었습니다.');
+      if(!completed)interruptedAPrimeReplay(request);
+      else if(!postReveal){day.step='aPrimePlaybackJudgement';persist();}
     }catch(e){
       if(runtime.replay!==request)return;
       if(!postReveal&&request.started)discardAPrimeTake(rec,`${e.message} 같은 시행을 다시 녹음해 주세요.`);
@@ -252,7 +273,7 @@
   }
   function submitAPrimeAnswer() {
     const rec=aPrimeInitial();
-    if(day.step!=='aPrimePlaybackJudgement'||!A.isPending(rec)||rec.training.preRevealPlays!==1)return;
+    if(day.step!=='aPrimePlaybackJudgement'||!A.isPending(rec)||rec.training.preRevealPlays<1||rec.training.preRevealPlays>A.MAX_PRE_REVEAL_PLAYS)return;
     const realtimeJudgement=rec.training.realtimeJudgement,playbackJudgement=aPrimeAnswer('aPrimePlayback');
     if(!A.validJudgement(realtimeJudgement)||!A.validJudgement(playbackJudgement))return;
     if(!H().updateTraining(rec.id,{realtimeJudgement,playbackJudgement}))return error('두 판단을 저장하지 못했습니다.');
@@ -287,18 +308,29 @@
     const panel=mode&&(result||['aPrimeListenReady','aPrimePlaybackJudgement'].includes(step));
     show('aPrimeJudgements',panel);
     show('aPrimePlaybackFields',panel&&(result||step==='aPrimePlaybackJudgement'));
-    $('aPrimeLiveFields').disabled=result||!!runtime.replay||step==='aPrimePlaybackJudgement';
-    $('aPrimePlaybackFields').disabled=result||!!runtime.replay;
-    $('aPrimeLockStatus').textContent=result?'두 판단이 저장되어 잠겼습니다.':runtime.replay?'기준음 → 0.5초 쉼 → 내 녹음 재생 중…':'';
+    let prepared=null;
     if(panel){
       const rec=aPrimeInitial(),t=rec?.training;
+      const prePlays=t?.preRevealPlays??0,maxPlays=A.MAX_PRE_REVEAL_PLAYS;
+      const canReplay=step==='aPrimePlaybackJudgement'&&prePlays<maxPlays;
+      prepared=prepareAPrimeMedia(rec);
       if(result)setAPrimeAnswers(t?.realtimeJudgement,t?.playbackJudgement);
-      else if(step==='aPrimePlaybackJudgement')setAPrimeAnswer('aPrimeLive',t?.realtimeJudgement);
-      show('aPrimeReplayBtn',result);
-      $('aPrimeReplayBtn').disabled=!!runtime.replay||!clips.has(rec?.id);
+      else if(prePlays)setAPrimeAnswer('aPrimeLive',t?.realtimeJudgement);
+      $('aPrimeLiveFields').disabled=result||!!runtime.replay||prePlays>0;
+      $('aPrimePlaybackFields').disabled=result||!!runtime.replay;
+      for(const prefix of ['aPrimeLive','aPrimePlayback']){
+        const size=$(`${prefix}Size`);
+        size.disabled=$(`${prefix}Direction`).value==='match';
+        if(size.disabled)size.value='';
+      }
+      $('aPrimeLockStatus').textContent=runtime.replay?'기준음 → 0.5초 쉼 → 내 녹음 재생 중…':
+        prepared?.error||(prepared&&!prepared.media?'재생 준비 중…':result?'두 판단이 저장되어 잠겼습니다.':'');
+      show('aPrimeReplayBtn',result||canReplay);
+      $('aPrimeReplayBtn').textContent=result?'다시 듣기':`한 번 더 듣기 (${maxPlays-prePlays}회 남음)`;
+      $('aPrimeReplayBtn').disabled=!(result||canReplay)||!!runtime.replay||!prepared?.media;
       show('aPrimeCorrectionBtn',step==='aPrimeResult'&&needsCorrection());
       $('aPrimeCorrectionBtn').disabled=!!runtime.replay;
-      $('aPrimePlayCount').textContent=`공개 전 ${t?.preRevealPlays??0}/1회 · 공개 후 ${t?.postRevealPlays??0}회${clips.has(rec?.id)?'':' · 녹음 없음'}`;
+      $('aPrimePlayCount').textContent=`공개 전 ${prePlays}/${maxPlays}회 · 공개 후 ${t?.postRevealPlays??0}회${prepared?'':' · 녹음 없음'}`;
       const names=['에코 제거','잡음 제거','자동 증폭'];
       $('aPrimeMicStatus').textContent='브라우저 마이크 설정 · '+A.MIC_FIELDS.map((key,i)=>{
         const value=t?.micSettings?.[key];
@@ -314,6 +346,7 @@
       $('aPrimeWavBtn').disabled=busy||!count;
       $('aPrimeArchiveStatus').textContent=`선택 날짜의 완료 기록 ${rows.length}회 · WAV ${count}개. WAV는 이 페이지를 닫거나 새로고침하면 사라집니다.`;
     }
+    return prepared;
   }
   function submitAnswer() {
     const j=answer(),rec=current();if(!C.validJudgement(j)||!rec)return;
@@ -323,7 +356,7 @@
     day.step='initialResult';persist();render();
   }
   function advance() {
-    clearTimer();T().stop();runtime.context=null;runtime.stage='initial';
+    clearTimer();T().stop();runtime.context=null;runtime.stage='initial';runtime.prepared=null;
     day.cursor++;day.pendingId=null;day.initialSessionId=null;day.correctionIndex=null;day.step=round()?'referenceReady':'done';
     persist(); V().clearDisplayedPitch();render();
   }
@@ -342,7 +375,12 @@
       case 'retryReady':case 'retryInvalid':return capture('retry');
       case 'capturing':return V().stopMeasurement('user');
       case 'judgement':return submitAnswer();
-      case 'aPrimeListenReady':return listenAPrime(false);
+      case 'aPrimeListenReady':
+        if(runtime.prepared?.error){
+          discardAPrimeTake(aPrimeInitial(),runtime.prepared.error);
+          return capture('initial');
+        }
+        return listenAPrime(false);
       case 'aPrimePlaybackJudgement':return submitAPrimeAnswer();
       case 'aPrimeResult':return advance();
       case 'initialResult':return needsCorrection()?startCorrection():advance();
@@ -354,8 +392,7 @@
     if(!enabled)return;
     const replay=runtime.replay;runtime.replay=null;
     runtime.token++;clearTimer();T().stop();
-    if(replay&&!replay.postReveal&&replay.started)discardAPrimeTake(replay.record,'듣기가 중단되었습니다. 같은 시행을 다시 녹음해 주세요.');
-    else if(replay)render();
+    if(replay){if(replay.started)interruptedAPrimeReplay(replay);render();}
     if(V()?.state.measuring&&runtime.context){V().stopMeasurement('training-interrupted');return;}
     if(day?.step==='referencePlaying'){day.step='referenceReady';persist();render();}
   }
@@ -377,8 +414,8 @@
     show('recordingSaveControl',!enabled);show('resetBtn',!enabled);
     const button=$('measureBtn'),r=round(),rec=current(),step=day?.step;
     $('judgementProtocol').disabled=runtime.preparing||!!runtime.replay||V().state.measuring||step==='referencePlaying';
-    $('judgementSetupHint').textContent=aPrime()?'기준음 → 3초 발성 → 실시간 판단 → 한 번 듣기 → 재생 판단 → 결과 순서로 진행합니다.':'아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.';
-    renderAPrime(step);
+    $('judgementSetupHint').textContent=aPrime()?'기준음 → 3초 발성 → 실시간 판단 → 듣기(최대 2회) → 재생 판단 → 결과 순서로 진행합니다.':'아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.';
+    const prepared=renderAPrime(step);
     if(!enabled){
       $('judgementBadge').textContent='일반 녹음';
       button.textContent=V().state.measuring?'측정 종료':'마이크로 측정 시작';button.disabled=runtime.preparing;
@@ -395,17 +432,17 @@
     if(step==='aPrimeResult')$('judgementResult').textContent=`오차 중앙값: ${cents(rec?.assessment?.medianCents)}`;
     if(['initialResult','aPrimeResult','retryResult'].includes(step)&&Number.isFinite(rec?.levelDb))$('judgementResult').textContent+=`\n입력 크기: ${rec.levelDb.toFixed(1)} dBFS`;
     const texts={referenceReady:'기준음 듣기',referencePlaying:'기준음 재생 중',initialReady:'② 3초 부르기',capturing:'녹음 정지',judgement:'결과 보기',initialResult:needsCorrection()?'화면 교정 시작':'다음 회차',screenCorrection:'교정 녹음 정지',retryReady:'재시도 · 3초 녹음',retryResult:'다음 회차',initialInvalid:'다시 부르기',retryInvalid:'재시도 다시 녹음',done:'새 날짜·목표음으로 녹음 준비'};
-    Object.assign(texts,{aPrimeListenReady:'재생',aPrimePlaybackJudgement:'재생 판단 저장 · 결과 공개',aPrimeResult:'다음 시행'});
+    Object.assign(texts,{aPrimeListenReady:prepared?.error?'다시 부르기':'재생',aPrimePlaybackJudgement:'재생 판단 저장 · 결과 공개',aPrimeResult:'다음 시행'});
     button.textContent=runtime.replay?'재생 중…':texts[step]||'기준음 듣기 · 녹음 준비';
     button.disabled=runtime.preparing||!!runtime.replay||step==='referencePlaying'||step==='judgement'&&!C.validJudgement(answer())||step==='screenCorrection'&&runtime.startedAt==null;
-    if(step==='aPrimeListenReady')button.disabled||=!clips.has(rec?.id)||rec?.training.preRevealPlays!==0||!A.validJudgement(aPrimeAnswer('aPrimeLive'));
+    if(step==='aPrimeListenReady'&&!prepared?.error)button.disabled||=!prepared?.media||rec?.training.preRevealPlays>=A.MAX_PRE_REVEAL_PLAYS||!A.validJudgement(aPrimeAnswer('aPrimeLive'));
     if(step==='aPrimePlaybackJudgement')button.disabled||=!A.validJudgement(aPrimeAnswer('aPrimeLive'))||!A.validJudgement(aPrimeAnswer('aPrimePlayback'));
     if(step==='done'&&$('judgementDate').value===day.dayId){button.textContent='12회 녹음 완료';button.disabled=true;}
     const instructions={referenceReady:'기준음을 2초 듣고, 같은 녹음 버튼으로 ②를 시작하세요.',referencePlaying:'목표음을 듣습니다. 2초 후 자동으로 멈춥니다.',initialReady:'기준음 꺼짐. ②는 중간 음량으로 3초 유지하세요.',capturing:'음정과 그래프를 숨기고 녹음합니다.',judgement:'방향·크기·확신도를 입력해야 결과를 볼 수 있습니다.',initialInvalid:'유효한 0.5~2.5초 결과가 없습니다. 실패한 시도는 discarded로 저장했습니다.',retryInvalid:'유효한 결과가 없습니다. 실패한 재시도는 discarded로 저장했습니다.',screenCorrection:'기준음을 켠 채 화면을 보며 2초 맞춘 뒤 녹음을 정지하세요. 이 과정은 평가하지 않습니다.',retryReady:'기준음 꺼짐. 화면을 가리고 3초 재시도합니다. 판단은 입력하지 않습니다.',done:'12회 완료. 하루 JSON에 모든 단계와 실패한 시도를 포함합니다.'};
     if(aPrime())Object.assign(instructions,{
       initialInvalid:'이 시행의 평가를 완료하지 못했습니다. 같은 목표음을 다시 녹음하세요.',
-      aPrimeListenReady:'부를 때 느낀 방향과 확신도를 선택하면 재생할 수 있습니다. 공개 전에는 한 번만 들을 수 있습니다.',
-      aPrimePlaybackJudgement:'녹음을 듣고 느낀 방향과 확신도를 입력하세요. 저장하면 두 판단이 잠기고 오차가 공개됩니다.',
+      aPrimeListenReady:prepared?.error?'같은 목표음을 다시 녹음하세요.':'부를 때 느낀 방향·크기·확신도를 선택하면 재생할 수 있습니다. 공개 전에는 최대 두 번 들을 수 있습니다.',
+      aPrimePlaybackJudgement:'녹음을 듣고 느낀 방향·크기·확신도를 입력하세요. 저장하면 두 판단이 잠기고 오차가 공개됩니다.',
       aPrimeResult:'두 판단과 측정 결과를 비교하세요. 여기서 다시 듣거나 다음 시행으로 갈 수 있습니다.',
       done:'12회 완료. 페이지를 닫기 전에 WAV가 필요하면 내보내세요.',
     });
@@ -467,8 +504,8 @@
     $('trainingEnabledToggle').addEventListener('change',e=>setEnabled(e.target.checked));
     $('judgementDate').addEventListener('change',updateOrder);
     $('judgementProtocol').addEventListener('change',changeProtocol);
-    for(const id of ['aPrimeLiveDirection','aPrimeLiveConfidence','aPrimePlaybackDirection','aPrimePlaybackConfidence'])$(id).addEventListener('change',render);
-    $('aPrimeReplayBtn').addEventListener('click',()=>listenAPrime(true));
+    for(const prefix of ['aPrimeLive','aPrimePlayback'])for(const field of ['Direction','Size','Confidence'])$(prefix+field).addEventListener('change',render);
+    $('aPrimeReplayBtn').addEventListener('click',()=>listenAPrime(['aPrimeResult','retryResult'].includes(day?.step)));
     $('aPrimeCorrectionBtn').addEventListener('click',()=>{if(aPrime()&&enabled&&!runtime.replay&&!runtime.preparing&&day?.step==='aPrimeResult'&&needsCorrection())startCorrection();});
     $('aPrimeCsvBtn').addEventListener('click',()=>exportAPrime('csv'));
     $('aPrimeWavBtn').addEventListener('click',()=>exportAPrime('wav'));
@@ -483,8 +520,8 @@
     window.addEventListener('vs:input-level',e=>{runtime.take?.append(e.detail);liveLevelDb=e.detail.db;updateLevelMeter();});
     window.addEventListener('vs:history-saved',onSaved);window.addEventListener('vs:measurement-stop',onStop);
     window.addEventListener('vs:visibility',e=>{if(e.detail.hidden)interrupt();});window.addEventListener('pagehide',interrupt);
-    window.addEventListener('vs:history-session-deleted',e=>{clips.delete(e.detail?.id);render();});
-    window.addEventListener('vs:history-cleared',()=>{interrupt();clips.clear();day=null;localStorage.removeItem(KEY);localStorage.removeItem(APRIME_KEY);render();});
+    window.addEventListener('vs:history-session-deleted',e=>{clips.delete(e.detail?.id);if(runtime.prepared?.id===e.detail?.id)runtime.prepared=null;render();});
+    window.addEventListener('vs:history-cleared',()=>{interrupt();clips.clear();runtime.prepared=null;day=null;localStorage.removeItem(KEY);localStorage.removeItem(APRIME_KEY);render();});
   }
   window.VocalJudgementPractice={handleButton,isEnabled:()=>enabled,isActive:active,isPitchHidden:pitchHidden,getSessionContext};
   document.addEventListener('DOMContentLoaded',init);

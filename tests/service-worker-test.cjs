@@ -49,7 +49,7 @@ async function request(url,mode='same-origin'){
     assert.ok((await request(url)).ok);
   }
   assert.ok(await caches.match(`./pitch-worker.js?v=${version}`));
-  assert.ok((await request(`./a-prime-pcm.js?v=${version}`)).ok);
+  assert.equal(await caches.match(`./a-prime-pcm.js?v=${version}`),undefined);
   const worker=fs.readFileSync(path.join(root,'pitch-worker.js'),'utf8');
   assert.ok(worker.includes(`./pitch-core.js?v=${version}`));
   assert.ok((await (await request('./','navigate')).text()).includes('judgementCorrectionThreshold'));
