@@ -9,8 +9,8 @@
   <meta name="apple-mobile-web-app-title" content="보컬 스코프" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icon-180.png" />
-  <link rel="stylesheet" href="./styles.css?v=3.8.0" />
-  <link rel="stylesheet" href="./history.css?v=3.8.0" />
+  <link rel="stylesheet" href="./styles.css?v=3.9.0" />
+  <link rel="stylesheet" href="./history.css?v=3.9.0" />
   <title>보컬 스코프</title>
 </head>
 <body>
@@ -45,6 +45,7 @@
       </div>
       <p id="judgementModeHelp" class="judgement-note">훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.</p>
       <div id="judgementOrderControls" class="hidden">
+        <label class="judgement-wide-field">훈련 모드<select id="judgementProtocol"><option value="v3a">기존 판단 훈련</option><option value="a-prime">A′ · 녹음 듣고 비교</option></select></label>
         <p id="judgementBlockOrder" class="judgement-note"></p>
         <p id="judgementOrderHelp" class="judgement-note hidden">화면 교정 · 입력한 목표음 순서대로 진행합니다.</p>
       </div>
@@ -68,7 +69,7 @@
           <label id="judgementFeedbackField">피드백 단계<select id="judgementFeedback"><option value="0">0 · 모든 회차</option><option value="1">1 · 짝수 회차</option><option value="2">2 · 3회에 1회</option></select></label>
         </div>
         <label class="judgement-wide-field">오늘 목표음 12개 · 순서대로 붙여 넣기<textarea id="judgementTargets" rows="3" spellcheck="false" required placeholder="E3 D#3 F3 D#3 G3 D3 B2 C3 C#3 C3 A2 A#2"></textarea></label>
-        <p class="judgement-note">아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.</p>
+        <p id="judgementSetupHint" class="judgement-note">아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.</p>
       </form>
       <div id="judgementActive" class="hidden">
         <p id="judgementLabel" class="judgement-label"></p>
@@ -88,6 +89,29 @@
             <label>확신도<select id="judgementConfidence" required><option value="">선택</option><option value="1">1 · 찍음</option><option value="2">2 · 애매</option><option value="3">3 · 확실</option></select></label>
           </div>
         </form>
+        <div id="aPrimeJudgements" class="a-prime-panel hidden">
+          <fieldset id="aPrimeLiveFields">
+            <legend>실시간 판단</legend>
+            <div class="judgement-fields">
+              <label>방향<select id="aPrimeLiveDirection"><option value="">선택</option><option value="high">높음</option><option value="match">맞음</option><option value="low">낮음</option></select></label>
+              <label>확신도<select id="aPrimeLiveConfidence"><option value="">선택</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+            </div>
+          </fieldset>
+          <fieldset id="aPrimePlaybackFields" class="hidden">
+            <legend>재생 판단</legend>
+            <div class="judgement-fields">
+              <label>방향<select id="aPrimePlaybackDirection"><option value="">선택</option><option value="high">높음</option><option value="match">맞음</option><option value="low">낮음</option></select></label>
+              <label>확신도<select id="aPrimePlaybackConfidence"><option value="">선택</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+            </div>
+          </fieldset>
+          <p id="aPrimeLockStatus" class="judgement-note" aria-live="polite"></p>
+          <p id="aPrimePlayCount" class="judgement-note"></p>
+          <p id="aPrimeMicStatus" class="judgement-note"></p>
+          <div class="a-prime-actions">
+            <button id="aPrimeReplayBtn" class="secondary-btn hidden" type="button">다시 듣기</button>
+            <button id="aPrimeCorrectionBtn" class="secondary-btn hidden" type="button">화면 교정</button>
+          </div>
+        </div>
         <div id="judgementResult" class="judgement-result hidden" aria-live="polite"></div>
       </div>
       <p id="judgementActionError" class="judgement-error hidden" role="alert"></p>
@@ -104,6 +128,13 @@
       <div id="trainingExportControls" class="judgement-fields recording-export hidden">
         <label>내보낼 연습 날짜<input id="trainingExportDate" type="date" /></label>
         <button id="trainingExportBtn" class="secondary-btn" type="button">하루 JSON 내보내기</button>
+      </div>
+      <div id="aPrimeExports" class="a-prime-panel hidden">
+        <div class="a-prime-actions">
+          <button id="aPrimeCsvBtn" class="secondary-btn" type="button">A′ CSV 내보내기</button>
+          <button id="aPrimeWavBtn" class="secondary-btn" type="button">A′ WAV 묶음 내보내기</button>
+        </div>
+        <p id="aPrimeArchiveStatus" class="judgement-note"></p>
       </div>
       <p class="recording-storage-note">음성과 기록은 이 기기에 저장됩니다. 중요한 파일은 별도로 보관하세요.</p>
     </section>
@@ -418,16 +449,17 @@
     </form>
   </dialog>
 
-  <script src="./pitch-core.js?v=3.8.0"></script>
-  <script src="./judgement-core.js?v=3.8.0"></script>
-  <script src="./level-core.js?v=3.8.0"></script>
-  <script src="./app.js?v=3.8.0" defer></script>
-  <script src="./history.js?v=3.8.0" defer></script>
-  <script src="./history-share.js?v=3.8.0" defer></script>
-  <script src="./vocal-scope-patch.js?v=3.8.0" defer></script>
-  <script src="./reference-tone.js?v=3.8.0" defer></script>
-  <script src="./phrase-practice.js?v=3.8.0" defer></script>
-  <script src="./recording.js?v=3.8.0" defer></script>
-  <script src="./judgement-practice.js?v=3.8.0" defer></script>
+  <script src="./pitch-core.js?v=3.9.0"></script>
+  <script src="./judgement-core.js?v=3.9.0"></script>
+  <script src="./level-core.js?v=3.9.0"></script>
+  <script src="./a-prime.js?v=3.9.0"></script>
+  <script src="./app.js?v=3.9.0" defer></script>
+  <script src="./history.js?v=3.9.0" defer></script>
+  <script src="./history-share.js?v=3.9.0" defer></script>
+  <script src="./vocal-scope-patch.js?v=3.9.0" defer></script>
+  <script src="./reference-tone.js?v=3.9.0" defer></script>
+  <script src="./phrase-practice.js?v=3.9.0" defer></script>
+  <script src="./recording.js?v=3.9.0" defer></script>
+  <script src="./judgement-practice.js?v=3.9.0" defer></script>
 </body>
 </html>

@@ -23,7 +23,7 @@
   function dateLabel(ts){const d=new Date(ts),today=new Date();const date=d.toDateString()===today.toDateString()?'오늘':`${d.getMonth()+1}/${d.getDate()}`;return`${date} ${d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',hour12:false})}`;}
   function fullDate(ts){return new Date(ts).toLocaleString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false});}
   function describe(s){if(s?.training)return window.VocalJudgementCore.label(s.training,s.targetMidi);if(s?.plan?.type==='phrase')return s.plan.label||'가사 구절';if(s?.plan?.type==='interval'){const a=note(s.plan.pattern?.[0]),b=note(s.plan.pattern?.[1]);return`${a.name} ↔ ${b.name}`;}if(Number.isFinite(s?.targetMidi)){const n=note(s.targetMidi);return`${n.name} · ${n.korean}`;}return'자유 측정';}
-  function isLocked(s){return s?.training?.stage==='initial'&&!s.training.judgement;}
+  function isLocked(s){return s?.training?.protocol==='a-prime'?window.VocalAPrime.isBlind(s):s?.training?.stage==='initial'&&!s.training.judgement;}
   function hideFeedback(s){return isLocked(s)||(Number.isInteger(s?.training?.trial)&&!window.VocalJudgementCore.shouldShowFeedback(s.training.feedbackLevel,s.training.trial));}
   function windowScore(s){if(s?.assessment)return s.assessment;return window.VocalJudgementCore?.windowMedian(s?.points||[],s?.targetMidi);}
   function getTechnique(s){if(s?.technique?.analysisVersion===3&&Array.isArray(s.technique.utterances))return s.technique;return P().analyzeTechnique(s?.points||[],{targetMidi:s?.targetMidi,plan:s?.plan,gapMs:PHRASE_GAP_MS,captureIntervalMs:CAPTURE_INTERVAL_MS});}
@@ -87,7 +87,7 @@
   function openSession(id){
     const s=readSessions().find(x=>x.id===id);
     if(!s)return;
-    if(isLocked(s)){toast('먼저 저장된 훈련을 이어서 방향·크기·확신도를 입력해 주세요.');return;}
+    if(isLocked(s)){toast(s.training.protocol==='a-prime'?'A′는 두 판단을 마친 시행의 결과만 볼 수 있습니다.':'먼저 저장된 훈련을 이어서 방향·크기·확신도를 입력해 주세요.');return;}
     if(hideFeedback(s)){toast('이 회차는 피드백 줄이기 단계로 판단만 기록했습니다.');return;}
     if(window.VocalJudgementPractice?.isActive?.()){toast('훈련을 잠시 중단한 뒤 기록을 열어 주세요.');return;}
     selectedSessionId=id;
@@ -99,6 +99,10 @@
     const trainingPanel=document.getElementById('sessionJudgementPanel');
     trainingPanel.classList.toggle('hidden',!s.training);
     if(s.training){const t=s.training,j=t.judgement;const sizes={'lt_semitone':'반음 미만','semitone_to_tone':'반음~온음',more:'그 이상',octave:'옥타브','sub-semitone':'반음 미만','semitone-tone':'반음~온음',larger:'그 이상'};trainingPanel.textContent=window.VocalJudgementCore.label(t,s.targetMidi)+'\n'+(j?`판단: ${({high:'높음',match:'맞음',low:'낮음'})[j.direction]} · ${sizes[j.size]||'크기 해당 없음'} · 확신도 ${j.confidence}`:t.stage==='discarded'?'실패한 시도':t.stage==='correction'?'교정 과정 · 평가 제외':'재시도 · 판단 입력 없음')+(typeof t.beatHeard==='boolean'?`\n울렁임: ${t.beatHeard?'Y':'N'}`:'');}
+    if(window.VocalAPrime.isInitial(s)){
+      const t=s.training;
+      trainingPanel.textContent=`A′ · ${describe(s)}\n실시간 판단: ${window.VocalAPrime.judgementText(t.realtimeJudgement)}\n재생 판단: ${window.VocalAPrime.judgementText(t.playbackJudgement)}\n공개 전 재생 ${t.preRevealPlays}회 · 공개 후 ${t.postRevealPlays}회 · 화면 교정 ${t.screenCorrectionUsed?'사용':'미사용'}`;
+    }
     document.getElementById('sessionTitle').textContent=describe(s);
     document.getElementById('sessionDate').textContent=fullDate(s.createdAt);
     document.getElementById('sessionLanding').textContent=tech?signed(tech.landingCents):'—';

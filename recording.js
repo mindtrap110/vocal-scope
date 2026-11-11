@@ -241,7 +241,8 @@
 
   function startRecording() {
     renderState();
-    if ((!state.enabled && !window.VocalJudgementPractice?.getSessionContext?.()) || !state.supported) return;
+    const training = window.VocalJudgementPractice?.getSessionContext?.();
+    if (training?.protocol === 'a-prime' || ((!state.enabled && !training) || !state.supported)) return;
     const stream = V()?.getCurrentStream?.();
     if (!stream?.getAudioTracks?.().some(track => track.readyState === 'live')) {
       toast('녹음을 시작할 마이크 입력을 찾지 못했습니다.');

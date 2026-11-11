@@ -215,6 +215,13 @@ body.judgement-active #intervalTrainer { display:none !important; }
 body.judgement-active:not(.judgement-screen-correction) .graph-card { display:none !important; }
 body.training-enabled .sticky-actions { grid-template-columns:1fr; }
 .recording-export { margin-top:14px; grid-template-columns:1fr 1fr; align-items:end; }
+.a-prime-panel { display:grid; gap:8px; margin-top:14px; }
+.a-prime-panel fieldset { margin:0; padding:10px; min-width:0; border:1px solid var(--line); border-radius:12px; }
+.a-prime-panel legend { padding:0 5px; color:#e7efff; font-size:13px; font-weight:700; }
+.a-prime-panel .judgement-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.a-prime-panel .judgement-note { margin:0; }
+.a-prime-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.a-prime-actions button { flex:1 1 145px; min-height:44px; }
 body.judgement-active #recordingLibraryBtn { display:none; }
 body.judgement-active .judgement-card { border-color:rgba(101,225,194,.3); }
 body.judgement-active #helpBtn { visibility:hidden; }

@@ -9,6 +9,7 @@
   let toneToken = 0;
   let buttonTimer = null;
   let trainingMaster = null;
+  let activeReplay = null;
 
   function ensureStyles() {
     if (document.getElementById('referenceToneStyles')) return;
@@ -69,6 +70,7 @@
 
   function stopActiveTone() {
     toneToken += 1;
+    finishReplay(false);
     clearTimeout(buttonTimer);
     const nodes = activeNodes;
     if (trainingMaster && toneContext?.state === 'running') {
@@ -95,12 +97,29 @@
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  async function trainingTone(midi, durationMs, { allowPitch = false } = {}) {
+  function finishReplay(completed) {
+    const replay = activeReplay;
+    if (!replay) return;
+    activeReplay = null;
+    clearTimeout(replay.timer);
+    replay.context.removeEventListener('statechange', replay.onStateChange);
+    replay.voice.onended = null;
+    replay.resolve(completed);
+  }
+
+  async function trainingTone(midi, durationMs, { allowPitch = false, clip = null } = {}) {
     if (!Number.isFinite(midi)) throw new Error('목표음을 확인해 주세요.');
     stopActiveTone();
     const token = toneToken;
     const ctx = await ensureAudioContext();
     if (token !== toneToken) return;
+    let voice;
+    if (clip) {
+      const buffer = ctx.createBuffer(1, clip.samples.length, clip.sampleRate);
+      buffer.getChannelData(0).set(clip.samples);
+      voice = ctx.createBufferSource();
+      voice.buffer = buffer;
+    }
     const now = ctx.currentTime;
     const master = ctx.createGain();
     master.gain.setValueAtTime(0, now);
@@ -125,6 +144,45 @@
     activeNodes = nodes; trainingMaster = master;
     continuous = !Number.isFinite(durationMs); allowPitchDuringTone = allowPitch;
     playingUntil = continuous ? Infinity : performance.now() + durationMs;
+    if (voice) {
+      const totalMs = durationMs + 500 + 1000 * voice.buffer.duration;
+      let resolve;
+      const ended = new Promise(done => { resolve = done; });
+      const replay = { context: ctx, voice, resolve, timer: null, onStateChange: () => {
+        if (activeReplay === replay && ctx.state !== 'running') stopActiveTone();
+      } };
+      activeReplay = replay;
+      activeNodes.push(voice);
+      playingUntil = performance.now() + totalMs;
+      ctx.addEventListener('statechange', replay.onStateChange);
+      voice.onended = () => {
+        if (activeReplay !== replay) return;
+        finishReplay(true);
+        stopActiveTone();
+      };
+      replay.timer = setTimeout(() => { if (activeReplay === replay) stopActiveTone(); }, totalMs + 3000);
+      try {
+        // One audio clock; no delayed media.play() and no gain change.
+        voice.connect(ctx.destination);
+        voice.start(now + durationMs / 1000 + 0.5);
+      } catch (error) { stopActiveTone(); throw error; }
+      return { ended };
+    }
+  }
+
+  async function playTrainingWithRecording(midi, clip) {
+    let timeout;
+    try {
+      const starting = trainingTone(midi, 1000, { clip });
+      const requestedToken = toneToken;
+      const limit = new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          if (requestedToken === toneToken) stopActiveTone();
+          reject(new Error('오디오 재생을 시작하지 못했습니다. 재생 버튼을 다시 눌러 주세요.'));
+        }, 4000);
+      });
+      return await Promise.race([starting, limit]);
+    } finally { clearTimeout(timeout); }
   }
 
   async function playMidi(midi, durationMs=1100) {
@@ -306,6 +364,7 @@
     stop: stopActiveTone,
     startContinuous,
     playTraining: (midi, ms = 2000) => trainingTone(midi, ms),
+    playTrainingWithRecording,
     startTrainingContinuous: (midi, options = {}) => trainingTone(midi, Infinity, options),
     get contextState() { return toneContext?.state || 'not-created'; },
     get isPlaying() { return performance.now() < playingUntil; },

@@ -26,7 +26,7 @@
   }
 
   function publicRecords(records) {
-    return Array.isArray(records) ? records : [];
+    return Array.isArray(records) ? records.filter(record => !window.VocalAPrime.isBlind(record)) : [];
   }
 
   function noteName(midi) {
@@ -108,6 +108,14 @@
     const tech = techniqueFor(session);
     const lines = [`${index + 1}. ${dateTime(session?.createdAt)} · ${mode}`];
     if (Number.isFinite(session?.levelDb)) lines.push(`   입력 크기 · 0.5~2.5초: ${session.levelDb.toFixed(1)} dBFS${session.training?.mixedWithReference ? ' · 기준음 포함' : ''}`);
+
+    if (window.VocalAPrime.isInitial(session)) {
+      const t = session.training, describe = window.VocalAPrime.judgementText;
+      lines.push(`   A′ · ${t.dayId} · ${t.trial}회 · 목표음 ${t.targetNote}`);
+      lines.push(`   실시간 판단: ${describe(t.realtimeJudgement)} / 재생 판단: ${describe(t.playbackJudgement)}`);
+      lines.push(`   오차 중앙값: ${signed(session.assessment?.medianCents)} · 공개 전 ${t.preRevealPlays}회 / 후 ${t.postRevealPlays}회 · 화면 교정 ${t.screenCorrectionUsed ? '사용' : '미사용'}`);
+      return lines;
+    }
 
     if (mode === '판단 보정') {
       const t = session.training, j = t.judgement;
@@ -360,14 +368,18 @@
     return parts.join('-');
   }
 
-  async function shareOrDownloadFile({ content, filename, type }) {
+  async function shareOrDownloadFile({ content, filename, type, fallbackOnShareError = false }) {
     const blob = new Blob([content], { type });
     const file = typeof File === 'function' ? new File([blob], filename, { type }) : null;
     if (file && navigator.share && navigator.canShare?.({ files: [file] })) {
       // Send only the file. Some iOS share extensions discard the attachment
       // when a separate text payload is supplied alongside it.
-      await navigator.share({ files: [file] });
-      return 'shared';
+      try {
+        await navigator.share({ files: [file] });
+        return 'shared';
+      } catch (error) {
+        if (!fallbackOnShareError || error?.name === 'AbortError') throw error;
+      }
     }
     const url = URL.createObjectURL(file || blob);
     const link = document.createElement('a');
@@ -461,7 +473,7 @@
 
   async function exportTrainingDay(date) {
     try {
-      const payload = window.VocalJudgementCore.exportDay(H().readSessions(), date);
+      const payload = window.VocalJudgementCore.exportDay(publicRecords(H().readSessions()), date);
       if (!payload.sessions.length) return showToast('이 날짜에 저장된 훈련 기록이 없습니다.');
       await shareOrDownloadFile({content:JSON.stringify(payload,null,2),filename:`vocal-scope-training-${date}.json`,type:'application/json'});
     } catch(error) { if(error?.name!=='AbortError')showToast(error.message || '내보내지 못했습니다.'); }
@@ -484,5 +496,6 @@
     shareSession,
     openShareDialog,
     exportTrainingDay,
+    shareOrDownloadFile,
   };
 })();
