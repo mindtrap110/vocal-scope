@@ -178,6 +178,7 @@ canvas { width:100%; height:100%; display:block; }
 .help-sheet ol { padding-left:22px; color:#d9e2f5; line-height:1.65; font-size:14px; }
 .judgement-intro, .judgement-note { color:var(--muted); font-size:12px; line-height:1.6; }
 .judgement-setup, .judgement-answer { display:grid; gap:12px; margin-top:14px; }
+.judgement-date-field { margin-top:10px; }
 .judgement-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
 .judgement-fields label, .judgement-wide-field { display:grid; gap:7px; color:#dce5f7; font-size:11px; line-height:1.5; }
 .judgement-fields input, .judgement-fields select, .judgement-wide-field input, .judgement-wide-field textarea, .judgement-wide-field select { width:100%; min-width:0; min-height:44px; border:1px solid var(--line); border-radius:11px; padding:10px; background:#111a2b; color:#e7efff; font:inherit; font-size:14px; }
@@ -227,7 +228,6 @@ body.judgement-active .judgement-card { border-color:rgba(101,225,194,.3); }
 body.judgement-active #helpBtn { visibility:hidden; }
 .help-callout { border:1px solid rgba(255,209,102,.2); background:rgba(255,209,102,.07); color:#f0dfae; border-radius:16px; padding:13px; font-size:12px; line-height:1.55; }
 @media (max-width:420px) {
-  .judgement-setup .judgement-fields { grid-template-columns:1fr; }
   .judgement-answer .judgement-fields { grid-template-columns:1fr; }
   .graph-wrap { height:285px; }
   .note-grid { grid-template-columns:repeat(3,1fr); }

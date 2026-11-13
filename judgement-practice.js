@@ -2,6 +2,7 @@
 (() => {
   const KEY = 'vocalScopeIntegratedRecordingV3a';
   const APRIME_KEY = 'vocalScopeIntegratedRecordingAPrime';
+  const APRIME_DATE_PREFIX = APRIME_KEY + ':';
   const PROTOCOL_KEY = 'vocalScopeJudgementProtocol';
   const MODE_KEY = 'vocalScopeTrainingModeV1';
   const LEVEL_KEY = 'vocalScopeLevelSettingsV1';
@@ -13,6 +14,7 @@
   const H = () => window.VocalHistory;
   const T = () => window.VocalScopeReferenceTone;
   let day = null, protocol = 'v3a';
+  let aPrimeDate = null;
   let enabled = false, normalTarget = null;
   let correctionRules = { threshold: 100, maximum: 3 };
   let levelSettings = { targetDb: null, toleranceDb: 4 }, liveLevelDb = null;
@@ -24,6 +26,7 @@
   const current = () => H().readSessions().find(s => s.id === day?.pendingId);
   const active = () => enabled && !!day && day.step !== 'done';
   const pitchHidden = () => active() && day.step !== 'screenCorrection';
+  const audioBusy = () => runtime.preparing || !!runtime.replay || V().state.measuring || day?.step === 'referencePlaying';
   const show = (id, yes) => $(id)?.classList.toggle('hidden', !yes);
   const cents = n => Number.isFinite(n) ? `${n < 0 ? '−' : '+'}${Math.abs(n).toFixed(1)}¢` : '유효 결과 없음';
   function error(text = '') { $('judgementActionError').textContent = text; }
@@ -92,7 +95,33 @@
   function updateOrder() {
     $('judgementBlockOrder').textContent=aPrime()?'A′ · 12회 · 실시간 판단 → 듣기 → 재생 판단':'v3a · 화면 1블록 × 12회';
     $('trainingExportDate').value = $('judgementDate').value;
-    if(day?.step==='done')render();
+  }
+  function changeDate() {
+    if(!aPrime()){updateOrder();if(day?.step==='done')render();return;}
+    const input=$('judgementDate'), date=input.value;
+    if(date===aPrimeDate)return;
+    if(!enabled||audioBusy()||!C.validDate(date)){
+      input.value=aPrimeDate;
+      if(enabled&&!audioBusy())error('연습 날짜를 선택해 주세요.');
+      return;
+    }
+    try {
+      // Keep the current key compatible with older versions. Archive its day
+      // before replacing it so switching dates never overwrites that progress.
+      const saved=JSON.parse(localStorage.getItem(APRIME_DATE_PREFIX+date)||'null');
+      if(day){
+        const draft=['aPrimeListenReady','aPrimePlaybackJudgement'].includes(day.step)
+          ? {live:aPrimeAnswer('aPrimeLive'),playback:aPrimeAnswer('aPrimePlayback')} : null;
+        localStorage.setItem(APRIME_DATE_PREFIX+day.dayId,JSON.stringify({...day,draft}));
+      }
+      localStorage.setItem(APRIME_KEY,JSON.stringify(saved?.dayId===date&&saved.rounds?.length?saved:{dayId:date}));
+    }catch(_){
+      input.value=aPrimeDate;
+      return error('진행을 저장하지 못해 연습 날짜를 바꾸지 못했습니다.');
+    }
+    interrupt();
+    runtime.prepared=null;
+    error();restore();updateOrder();V().clearDisplayedPitch();render();
   }
   function configure() {
     const date = $('judgementDate').value;
@@ -110,7 +139,7 @@
   }
   function changeProtocol() {
     const select=$('judgementProtocol');
-    if(runtime.preparing||runtime.replay||V().state.measuring||day?.step==='referencePlaying'){select.value=protocol;return;}
+    if(audioBusy()){select.value=protocol;return;}
     const next=select.value===A.PROTOCOL?A.PROTOCOL:'v3a';
     if(next===protocol)return;
     interrupt();
@@ -169,7 +198,7 @@
     if(!runtime.context){queueMicrotask(render);return;}
     clearTimer();T().stop();
     const rec=current(), stage=runtime.stage, take=runtime.take, clip=take?.clip; runtime.context=null;disposeTake();
-    if(!rec){day.step=stage==='retry'?'retryReady':stage==='correction'?initialResultStep():'initialReady';persist();render();return error('기록을 저장하지 못했습니다. 다시 녹음해 주세요.');}
+    if(!rec){day.step=stage==='retry'?'retryReady':stage==='correction'?initialResultStep():'initialReady';persist();queueMicrotask(render);return error('기록을 저장하지 못했습니다. 다시 녹음해 주세요.');}
     if(stage==='correction') {
       if(aPrime()&&!H().updateTraining(day.initialSessionId,{screenCorrectionUsed:true}))error('화면 교정 여부를 저장하지 못했습니다.');
       day.step='retryReady';
@@ -368,6 +397,7 @@
       try {await V().startMeasurement();} finally {runtime.preparing=false;render();}
       return;
     }
+    if(aPrime()&&day?.step==='done')return;
     if(!day||day.step==='done'){try{configure();}catch(e){error(e.message);return;} }
     switch(day.step){
       case 'referenceReady':return reference();
@@ -403,7 +433,9 @@
     $('trainingEnabledToggle').checked=enabled;$('trainingEnabledToggle').disabled=runtime.preparing;
     $('trainingToggleLabel').textContent=enabled?'켜짐':'꺼짐';
     $('judgementModeHelp').textContent=enabled?'같은 녹음 버튼으로 훈련을 진행합니다. 훈련을 꺼도 진행 상황은 보관됩니다.':'훈련을 켜면 같은 녹음 버튼에 기준음·판단 입력·교정·재시도가 적용됩니다.';
-    show('judgementSetup',enabled&&!active()); show('judgementActive',enabled&&!!day);
+    show('judgementSetup',enabled&&(aPrime()?!day:!active())); show('judgementActive',enabled&&!!day);
+    show('judgementDateField',enabled&&(aPrime()||!active()));
+    $('judgementDate').disabled=aPrime()&&audioBusy();
     show('judgementFeedbackField',enabled&&!aPrime());show('trainingExportControls',enabled);show('judgementActionError',enabled);
     show('judgementOrderControls',enabled);show('judgementOrderHelp',active());
     show('judgementCorrectionRules',enabled);
@@ -413,7 +445,7 @@
     show('judgementLevelControls',enabled);updateLevelMeter();
     show('recordingSaveControl',!enabled);show('resetBtn',!enabled);
     const button=$('measureBtn'),r=round(),rec=current(),step=day?.step;
-    $('judgementProtocol').disabled=runtime.preparing||!!runtime.replay||V().state.measuring||step==='referencePlaying';
+    $('judgementProtocol').disabled=audioBusy();
     $('judgementSetupHint').textContent=aPrime()?'기준음 → 3초 발성 → 실시간 판단 → 듣기(최대 2회) → 재생 판단 → 결과 순서로 진행합니다.':'아래의 기존 녹음 버튼으로 기준음 → ② → 판단 → 교정 → 재시도를 진행합니다.';
     const prepared=renderAPrime(step);
     if(!enabled){
@@ -437,7 +469,7 @@
     button.disabled=runtime.preparing||!!runtime.replay||step==='referencePlaying'||step==='judgement'&&!C.validJudgement(answer())||step==='screenCorrection'&&runtime.startedAt==null;
     if(step==='aPrimeListenReady'&&!prepared?.error)button.disabled||=!prepared?.media||rec?.training.preRevealPlays>=A.MAX_PRE_REVEAL_PLAYS||!A.validJudgement(aPrimeAnswer('aPrimeLive'));
     if(step==='aPrimePlaybackJudgement')button.disabled||=!A.validJudgement(aPrimeAnswer('aPrimeLive'))||!A.validJudgement(aPrimeAnswer('aPrimePlayback'));
-    if(step==='done'&&$('judgementDate').value===day.dayId){button.textContent='12회 녹음 완료';button.disabled=true;}
+    if(step==='done'&&(aPrime()||$('judgementDate').value===day.dayId)){button.textContent='12회 녹음 완료';button.disabled=true;}
     const instructions={referenceReady:'기준음을 2초 듣고, 같은 녹음 버튼으로 ②를 시작하세요.',referencePlaying:'목표음을 듣습니다. 2초 후 자동으로 멈춥니다.',initialReady:'기준음 꺼짐. ②는 중간 음량으로 3초 유지하세요.',capturing:'음정과 그래프를 숨기고 녹음합니다.',judgement:'방향·크기·확신도를 입력해야 결과를 볼 수 있습니다.',initialInvalid:'유효한 0.5~2.5초 결과가 없습니다. 실패한 시도는 discarded로 저장했습니다.',retryInvalid:'유효한 결과가 없습니다. 실패한 재시도는 discarded로 저장했습니다.',screenCorrection:'기준음을 켠 채 화면을 보며 2초 맞춘 뒤 녹음을 정지하세요. 이 과정은 평가하지 않습니다.',retryReady:'기준음 꺼짐. 화면을 가리고 3초 재시도합니다. 판단은 입력하지 않습니다.',done:'12회 완료. 하루 JSON에 모든 단계와 실패한 시도를 포함합니다.'};
     if(aPrime())Object.assign(instructions,{
       initialInvalid:'이 시행의 평가를 완료하지 못했습니다. 같은 목표음을 다시 녹음하세요.',
@@ -451,6 +483,12 @@
   }
   function restore(){
     try{day=JSON.parse(localStorage.getItem(dayKey())||'null');}catch(_){day=null;}
+    if(aPrime()){
+      const input=$('judgementDate');
+      aPrimeDate=C.validDate(day?.dayId)?day.dayId:C.validDate(input.value)?input.value:localDate();
+      input.value=aPrimeDate;
+      if(!day?.rounds?.length){day=null;setAPrimeAnswers();return;}
+    }
     if(!day?.rounds?.length){day=null;return;}
     $('judgementDate').value=day.dayId;$('judgementTargets').value=day.rounds.map(r=>r.targetNote).join(' ');
     if(aPrime()){restoreAPrime();return;}
@@ -470,7 +508,10 @@
   function restoreAPrime(){
     const initial=aPrimeInitial();
     const complete=initial&&!A.isPending(initial);
-    setAPrimeAnswers(initial?.training.realtimeJudgement,initial?.training.playbackJudgement);
+    const t=initial?.training, draft=day.draft;
+    delete day.draft;
+    setAPrimeAnswers(t?.preRevealPlays?t.realtimeJudgement:draft?.live??t?.realtimeJudgement,
+      t?.playbackJudgement??draft?.playback);
     if(day.step==='referencePlaying')day.step='referenceReady';
     if(day.step==='capturing'||['aPrimeListenReady','aPrimePlaybackJudgement','aPrimeResult'].includes(day.step)){
       if(complete){
@@ -491,7 +532,6 @@
     try{const saved=JSON.parse(localStorage.getItem(RULE_KEY)||'null');if(saved&&Number.isFinite(saved.threshold)&&saved.threshold>=0&&Number.isInteger(saved.maximum)&&saved.maximum>=0)correctionRules=saved;}catch(_){}
     $('judgementCorrectionThreshold').value=String(correctionRules.threshold);$('judgementCorrectionMaximum').value=String(correctionRules.maximum);
     ['judgementCorrectionThreshold','judgementCorrectionMaximum'].forEach(id=>$(id).addEventListener('change',saveCorrectionRules));
-    const feedback=$('judgementFeedback').closest('label');feedback.classList.add('judgement-wide-field');$('judgementSetup').before(feedback);
     try{const saved=JSON.parse(localStorage.getItem(LEVEL_KEY)||'null');if(saved&&Number.isFinite(saved.toleranceDb)&&saved.toleranceDb>=0&&(saved.targetDb===null||Number.isFinite(saved.targetDb)&&saved.targetDb>=-160&&saved.targetDb<=0))levelSettings={targetDb:saved.targetDb,toleranceDb:saved.toleranceDb};}catch(_){}
     $('judgementLevelTarget').value=levelSettings.targetDb??'';$('judgementLevelTolerance').value=String(levelSettings.toleranceDb);
     try{if(localStorage.getItem(PROTOCOL_KEY)===A.PROTOCOL)protocol=A.PROTOCOL;}catch(_){}
@@ -502,7 +542,7 @@
     updateOrder();render();
     window.dispatchEvent(new CustomEvent('vs:training-mode-change',{detail:{enabled}}));
     $('trainingEnabledToggle').addEventListener('change',e=>setEnabled(e.target.checked));
-    $('judgementDate').addEventListener('change',updateOrder);
+    $('judgementDate').addEventListener('change',changeDate);
     $('judgementProtocol').addEventListener('change',changeProtocol);
     for(const prefix of ['aPrimeLive','aPrimePlayback'])for(const field of ['Direction','Size','Confidence'])$(prefix+field).addEventListener('change',render);
     $('aPrimeReplayBtn').addEventListener('click',()=>listenAPrime(['aPrimeResult','retryResult'].includes(day?.step)));
@@ -521,7 +561,13 @@
     window.addEventListener('vs:history-saved',onSaved);window.addEventListener('vs:measurement-stop',onStop);
     window.addEventListener('vs:visibility',e=>{if(e.detail.hidden)interrupt();});window.addEventListener('pagehide',interrupt);
     window.addEventListener('vs:history-session-deleted',e=>{clips.delete(e.detail?.id);if(runtime.prepared?.id===e.detail?.id)runtime.prepared=null;render();});
-    window.addEventListener('vs:history-cleared',()=>{interrupt();clips.clear();runtime.prepared=null;day=null;localStorage.removeItem(KEY);localStorage.removeItem(APRIME_KEY);render();});
+    window.addEventListener('vs:history-cleared',()=>{
+      interrupt();clips.clear();runtime.prepared=null;day=null;
+      for(const key of Object.keys(localStorage)){
+        if(key===KEY||key===APRIME_KEY||key.startsWith(APRIME_DATE_PREFIX))localStorage.removeItem(key);
+      }
+      render();
+    });
   }
   window.VocalJudgementPractice={handleButton,isEnabled:()=>enabled,isActive:active,isPitchHidden:pitchHidden,getSessionContext};
   document.addEventListener('DOMContentLoaded',init);
